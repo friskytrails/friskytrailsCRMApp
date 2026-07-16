@@ -30,3 +30,6 @@ crash_log.txt
 dash.png
 dash2.png
 dash3.png
+
+# Claude Code project files (local only)
+.claude/
