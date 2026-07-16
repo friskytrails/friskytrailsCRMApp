@@ -1,0 +1,32 @@
+*.iml
+.gradle
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Local caches
+.gradle-user/
+.kotlin/
+
+# Local DB pulls (may contain real data)
+*.db
+
+# Crash dumps / local logs
+crash.txt
+crash_log.txt
+
+# Local screenshots
+.shot.png
+dash.png
+dash2.png
+dash3.png

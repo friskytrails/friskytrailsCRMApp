@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Adaptive-icon foreground: the Frisky Trails logo inset so it sits inside the icon's
+  safe zone (the launcher may mask the outer ~25% with a circle/squircle). The white
+  background is supplied by the adaptive-icon's <background>, so the logo reads on any
+  launcher shape.
+-->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/frisky_logo"
+    android:inset="18%" />
