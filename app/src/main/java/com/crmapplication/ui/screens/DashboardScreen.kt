@@ -74,63 +74,72 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
 
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(CrmPrimary, CrmSecondary)
-                        )
-                    )
-            ) {
-
+            Column {
                 Box(
                     modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .offset(x = (20 + bubbleAnim * 10).dp, y = (-20 + bubbleAnim * 10).dp)
-                        .size(130.dp)
-                        .blur(30.dp)
-                        .clip(CircleShape)
-                        .background(Color.White.copy(alpha = 0.15f))
-                )
-                Row(
-                    Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 20.dp, vertical = 18.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column {
-                        Text("Good day 👋", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
-                        Text(
-                            agentName.ifBlank { "Agent" },
-                            color = Color.White,
-                            fontWeight = FontWeight.ExtraBold,
-                            fontSize = 20.sp,
-                        )
-                    }
-                    Surface(
-                        color = Color.White.copy(alpha = 0.2f),
-                        shape = RoundedCornerShape(10.dp),
-                    ) {
-                        Column(
-                            Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-                            horizontalAlignment = Alignment.End,
-                        ) {
-                            Text(
-                                todayDate,
-                                color = Color.White,
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(CrmPrimary, CrmSecondary)
                             )
+                        )
+                ) {
+
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .offset(x = (20 + bubbleAnim * 10).dp, y = (-20 + bubbleAnim * 10).dp)
+                            .size(130.dp)
+                            .blur(30.dp)
+                            .clip(CircleShape)
+                            .background(Color.White.copy(alpha = 0.15f))
+                    )
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 20.dp, vertical = 18.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column {
+                            Text("Good day 👋", color = Color.White.copy(alpha = 0.8f), fontSize = 13.sp)
                             Text(
-                                todayTime,
-                                color = Color.White.copy(alpha = 0.85f),
-                                fontSize = 11.sp,
+                                agentName.ifBlank { "Agent" },
+                                color = Color.White,
+                                fontWeight = FontWeight.ExtraBold,
+                                fontSize = 20.sp,
                             )
                         }
+                        Surface(
+                            color = Color.White.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Column(
+                                Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                                horizontalAlignment = Alignment.End,
+                            ) {
+                                Text(
+                                    todayDate,
+                                    color = Color.White,
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    todayTime,
+                                    color = Color.White.copy(alpha = 0.85f),
+                                    fontSize = 11.sp,
+                                )
+                            }
+                        }
                     }
+                }
+                if (state.isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
+                        color = Color.White,
+                        trackColor = CrmPrimary.copy(alpha = 0.3f)
+                    )
                 }
             }
         },
@@ -172,7 +181,7 @@ fun DashboardScreen(
                 .padding(16.dp)
         ) {
 
-            if (state.isLoading) {
+            if (state.isLoading && state.data == null) {
                 Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = CrmPrimary)
                 }
@@ -191,6 +200,7 @@ fun DashboardScreen(
 
                     Spacer(Modifier.height(20.dp))
                 }
+                 
 
                 state.error?.let {
                     Spacer(Modifier.height(12.dp))
@@ -414,7 +424,9 @@ private fun MonthlyCard(stats: MonthlyStats) {
 
             PerformanceRow("🎯", "Monthly Target", stats.monthlyTarget)
             PerformanceRow("📘", "Booking Count", stats.bookingCount)
-            PerformanceRow("🗓️", "Attendance", stats.attendance, showDivider = false)
+            PerformanceRow("🗓️", "Monthly Attendance", stats.attendance, showDivider = false)
         }
     }
 }
+
+

@@ -1,7 +1,10 @@
 package com.crmapplication.ui.theme
 
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Shapes
 import androidx.compose.material3.darkColorScheme
@@ -62,13 +65,51 @@ private val CrmShapes = Shapes(
     extraLarge = RoundedCornerShape(16.dp),
 )
 
+/** Duration of the light↔dark cross-fade. Long enough to read as a smooth transition, short
+ *  enough not to feel sluggish when toggling the switch. */
+private const val THEME_ANIM_MS = 400
+
+/**
+ * Cross-fades every color-scheme field toward [target]. Material 3 swaps [ColorScheme] instantly
+ * (no built-in tween), so without this the whole app snaps between cream and navy in one frame.
+ * Animating each role means surfaces, text (`onSurface`/`onBackground`) and icon tints glide
+ * together. The brand orange (primary/secondary) is identical in both schemes, so it stays put.
+ */
+@Composable
+private fun animatedColorScheme(target: ColorScheme): ColorScheme {
+    val spec = tween<Color>(THEME_ANIM_MS)
+    @Composable fun anim(color: Color) = animateColorAsState(color, spec, label = "themeColor").value
+    return target.copy(
+        primary              = anim(target.primary),
+        onPrimary            = anim(target.onPrimary),
+        primaryContainer     = anim(target.primaryContainer),
+        onPrimaryContainer   = anim(target.onPrimaryContainer),
+        secondary            = anim(target.secondary),
+        onSecondary          = anim(target.onSecondary),
+        secondaryContainer   = anim(target.secondaryContainer),
+        onSecondaryContainer = anim(target.onSecondaryContainer),
+        tertiary             = anim(target.tertiary),
+        background           = anim(target.background),
+        onBackground         = anim(target.onBackground),
+        surface              = anim(target.surface),
+        onSurface            = anim(target.onSurface),
+        surfaceVariant       = anim(target.surfaceVariant),
+        onSurfaceVariant     = anim(target.onSurfaceVariant),
+        outline              = anim(target.outline),
+        outlineVariant       = anim(target.outlineVariant),
+        error                = anim(target.error),
+        onError              = anim(target.onError),
+    )
+}
+
 @Composable
 fun CRMApplicationTheme(
     darkTheme: Boolean = isSystemInDarkTheme(),
     content: @Composable () -> Unit,
 ) {
+    val target = if (darkTheme) CrmDarkColorScheme else CrmLightColorScheme
     MaterialTheme(
-        colorScheme = if (darkTheme) CrmDarkColorScheme else CrmLightColorScheme,
+        colorScheme = animatedColorScheme(target),
         typography  = Typography,
         shapes      = CrmShapes,
         content     = content,

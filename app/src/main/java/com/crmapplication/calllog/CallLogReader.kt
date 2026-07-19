@@ -26,7 +26,12 @@ class CallLogReader @Inject constructor(
         ContextCompat.checkSelfPermission(context, android.Manifest.permission.READ_CALL_LOG) ==
             PackageManager.PERMISSION_GRANTED
 
-    suspend fun callsForNumber(number: String): List<CallLogEntry> {
+    /**
+     * Calls to [number] on this device, matched by the last-10-digit key. When [sinceMillis] is
+     * given, calls older than that instant are dropped — used to exclude a lead's pre-assignment
+     * history so history/counts start when the lead landed with this agent. Null = no time filter.
+     */
+    suspend fun callsForNumber(number: String, sinceMillis: Long? = null): List<CallLogEntry> {
         if (!hasPermission()) return emptyList()
         val targetKey = number.normalizedPhoneKey()
         if (targetKey.isEmpty()) {
@@ -34,7 +39,10 @@ class CallLogReader @Inject constructor(
             return emptyList()
         }
         val all = readAll(context.contentResolver)
-        val matched = all.filter { it.number.normalizedPhoneKey() == targetKey }
+        val matched = all.filter {
+            it.number.normalizedPhoneKey() == targetKey &&
+                (sinceMillis == null || it.dateMillis >= sinceMillis)
+        }
         if (matched.isEmpty()) {
 
             val sample = all.take(15).joinToString { "${it.number}→${it.number.normalizedPhoneKey()}" }

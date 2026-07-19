@@ -6,7 +6,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Cake
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Campaign
 import androidx.compose.material.icons.filled.Check
@@ -38,8 +37,6 @@ import com.crmapplication.viewModel.LeadsViewModel
 
 private val LEAD_SOURCES = listOf("Instagram", "FaceBook", "AdCampaign", "Referral", "Website", "Other")
 
-private val PRODUCTS = listOf("Meghalaya Package", "Hampta Pass Trek", "Rishikesh Activities", "Spiti Package", "Ladakh Package")
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddLeadScreen(
@@ -50,7 +47,6 @@ fun AddLeadScreen(
     val state by viewModel.state.collectAsState()
 
     var fullName by remember { mutableStateOf("") }
-    var age by remember { mutableStateOf("") }
     var phone by remember { mutableStateOf("") }
     var mail by remember { mutableStateOf("") }
     var leadSource by remember { mutableStateOf("") }
@@ -147,14 +143,6 @@ fun AddLeadScreen(
                     leadingIcon = Icons.Filled.Email,
                     keyboardType = KeyboardType.Email,
                 )
-                LabeledField(
-                    label = "Age",
-                    value = age,
-                    onValueChange = { age = it.filter(Char::isDigit) },
-                    placeholder = "30",
-                    leadingIcon = Icons.Filled.Cake,
-                    keyboardType = KeyboardType.Number,
-                )
             }
 
             Spacer(Modifier.height(16.dp))
@@ -179,9 +167,12 @@ fun AddLeadScreen(
                     label = "Product",
                     value = product,
                     onValueChange = { product = it },
-                    options = PRODUCTS,
+                    options = state.products,
                     placeholder = "Select a product...",
                     leadingIcon = Icons.Filled.Sell,
+                    // Catalog is server-owned: re-fetch as the menu opens so a product added on the
+                    // backend shows up without reopening the screen. Throttled in the repository.
+                    onExpand = { viewModel.refreshProducts() },
                 )
                 LabeledField(
                     label = "Destination of Interest",
@@ -203,7 +194,6 @@ fun AddLeadScreen(
                         CreateLeadRequest(
                             name = fullName.trim(),
                             phone = phone.trim(),
-                            age = age.trim().toIntOrNull(),
                             origin = originCity.orNull(),
                             destination = destination.orNull(),
                             leadSource = leadSource.orNull(),
@@ -294,6 +284,8 @@ private fun LabeledDropdown(
     options: List<String>,
     placeholder: String,
     leadingIcon: ImageVector,
+    /** Fired when the menu opens, so a server-backed list can refresh just before it's read. */
+    onExpand: () -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
@@ -301,7 +293,10 @@ private fun LabeledDropdown(
         Spacer(Modifier.height(6.dp))
         ExposedDropdownMenuBox(
             expanded = expanded,
-            onExpandedChange = { expanded = it },
+            onExpandedChange = {
+                expanded = it
+                if (it) onExpand()
+            },
         ) {
             OutlinedTextField(
                 value = value,

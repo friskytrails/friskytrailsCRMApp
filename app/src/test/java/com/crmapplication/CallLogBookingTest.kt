@@ -49,18 +49,30 @@ class CallLogBookingTest {
     }
 
     @Test
-    fun `booking body counts dials, connections and total talk time`() {
-        val body = bookingFromCalls(calls)
+    fun `booking body counts today's dials, connections and talk time`() {
+        // bookingFromCalls is today-scoped to match the Dashboard performance card, so build
+        // two calls that both fall on now's day.
+        val now = 1_700_100_000_000L
+        val out = dialed.copy(id = 20L, dateMillis = now - 2_000L, durationSeconds = 120L)
+        val inc = incoming.copy(id = 21L, dateMillis = now - 1_000L, durationSeconds = 45L)
+
+        val body = bookingFromCalls(listOf(out, inc), now = now)
         assertNotNull(body)
         body!!
-        assertEquals("one outgoing call", 1, body.totalDial)
-        assertEquals("both calls connected (duration > 0)", 2, body.connected)
+        assertEquals("one outgoing call today", 1, body.totalDial)
+        assertEquals("today-scoped: totalDial equals dailyDial", body.totalDial, body.dailyDial)
+        assertEquals("both today's calls connected (duration > 0)", 2, body.connected)
         assertEquals("120s + 45s = 165s → 2:45", "2:45", body.talkTime)
+        assertEquals("today-scoped: talkTime equals dailyTalkTime", body.talkTime, body.dailyTalkTime)
     }
 
     @Test
-    fun `first and last call are the oldest and newest, in that order`() {
-        val body = bookingFromCalls(calls)!!
+    fun `first and last call are today's oldest and newest, in that order`() {
+        val now = 1_700_100_000_000L
+        val older = dialed.copy(id = 20L, dateMillis = now - 5_000L)
+        val newer = dialed.copy(id = 21L, dateMillis = now - 1_000L)
+
+        val body = bookingFromCalls(listOf(older, newer), now = now)!!
         assertNotNull(body.firstCall)
         assertNotNull(body.lastCall)
 
@@ -73,7 +85,7 @@ class CallLogBookingTest {
     }
 
     @Test
-    fun `daily fields count only calls on the day of now`() {
+    fun `booking counts only calls on the day of now`() {
 
         val now = 1_700_100_000_000L
         val todayA = dialed.copy(id = 10L, dateMillis = now - 1_000L, durationSeconds = 60L)
@@ -82,17 +94,16 @@ class CallLogBookingTest {
 
         val body = bookingFromCalls(listOf(todayA, todayB, yesterday), now = now)!!
 
-        assertEquals("all outgoing calls", 3, body.totalDial)
+        assertEquals("today-scoped: yesterday's call is excluded", 2, body.totalDial)
         assertEquals("only today's outgoing calls", 2, body.dailyDial)
         assertEquals("today's talk time 60s + 30s = 90s → 1:30", "1:30", body.dailyTalkTime)
+        assertEquals("talkTime is today-scoped too", "1:30", body.talkTime)
     }
 
     @Test
-    fun `daily fields are zero when no call falls on now's day`() {
-
-        val body = bookingFromCalls(calls, now = 1_900_000_000_000L)!!
-        assertEquals(0, body.dailyDial)
-        assertEquals("0:00", body.dailyTalkTime)
+    fun `nothing to push when no call falls on now's day`() {
+        // No calls today -> return null so an idle day never overwrites stored booking with zeros.
+        assertNull(bookingFromCalls(calls, now = 1_900_000_000_000L))
     }
 
     @Test

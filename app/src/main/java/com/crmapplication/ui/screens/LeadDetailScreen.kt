@@ -4,10 +4,13 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,6 +23,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -80,6 +85,8 @@ fun LeadDetailScreen(
     var showTimePicker by remember { mutableStateOf(false) }
     var pendingDateMillis by remember { mutableStateOf<Long?>(null) }
 
+    var showWhatsAppSheet by remember { mutableStateOf(false) }
+
     val callLogPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -138,47 +145,51 @@ fun LeadDetailScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            TopAppBar(
-                title = { Text(lead?.name ?: "Lead Detail") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
-                    }
-                },
-                actions = {
-
-                    IconButton(onClick = {
-                        lead?.let { context.shareLead(it) }
-                    }) {
-                        Text("🔗", fontSize = 20.sp)
-                    }
-
-                    IconButton(onClick = {
-                        lead?.phone?.let { phone ->
-                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))
-                            context.startActivity(intent)
+            Column {
+                TopAppBar(
+                    title = { Text(lead?.name ?: "Lead Detail") },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, "Back")
                         }
-                    }) {
-                        Text("📞", fontSize = 20.sp)
-                    }
+                    },
+                    actions = {
 
-                    IconButton(onClick = {
-                        lead?.phone?.let { phone ->
-                            val url = formatWhatsAppUrl(phone)
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                            intent.setPackage("com.whatsapp")
-                            try {
+                        IconButton(onClick = {
+                            lead?.let { context.shareLead(it) }
+                        }) {
+                            Text("🔗", fontSize = 20.sp)
+                        }
+
+                        IconButton(onClick = {
+                            lead?.phone?.let { phone ->
+                                val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))
                                 context.startActivity(intent)
-                            } catch (e: Exception) {
-
-                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                             }
+                        }) {
+                            Text("📞", fontSize = 20.sp)
                         }
-                    }) {
-                        Text("💬", fontSize = 20.sp)
+
+                        IconButton(onClick = {
+                            lead?.phone?.let { phone ->
+                                val hasWhatsApp = context.isPackageInstalled(WHATSAPP_PKG)
+                                val hasWhatsAppBusiness = context.isPackageInstalled(WHATSAPP_BUSINESS_PKG)
+                                when {
+                                    hasWhatsApp && hasWhatsAppBusiness -> showWhatsAppSheet = true
+                                    hasWhatsApp -> context.launchWhatsApp(phone, WHATSAPP_PKG)
+                                    hasWhatsAppBusiness -> context.launchWhatsApp(phone, WHATSAPP_BUSINESS_PKG)
+                                    else -> context.launchWhatsApp(phone, null)
+                                }
+                            }
+                        }) {
+                            Text("💬", fontSize = 20.sp)
+                        }
                     }
+                )
+                if (detailState.isLoading) {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
-            )
+            }
         }
     ) { innerPadding ->
         if (lead == null) {
@@ -342,9 +353,19 @@ fun LeadDetailScreen(
                             Button(
                                 onClick = { detailVm.addNote(noteText) },
                                 modifier = Modifier.weight(1f),
-                                enabled = noteText.isNotBlank(),
+                                enabled = noteText.isNotBlank() && !detailState.isSavingNote,
                             ) {
-                                Text("Send Note")
+                                if (detailState.isSavingNote) {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(18.dp),
+                                        strokeWidth = 2.dp,
+                                        color = MaterialTheme.colorScheme.onPrimary,
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Sending…")
+                                } else {
+                                    Text("Send Note")
+                                }
                             }
                         }
                     }
@@ -462,6 +483,52 @@ fun LeadDetailScreen(
             onGrantPermission = { callLogPermissionLauncher.launch(Manifest.permission.READ_CALL_LOG) },
             onDismiss = { detailVm.closeCallHistory() },
         )
+    }
+
+    if (showWhatsAppSheet) {
+        val sheetState = rememberModalBottomSheetState()
+        ModalBottomSheet(
+            onDismissRequest = { showWhatsAppSheet = false },
+            sheetState = sheetState,
+        ) {
+            val whatsAppIcon = remember { context.loadAppIcon(WHATSAPP_PKG) }
+            val whatsAppBusinessIcon = remember { context.loadAppIcon(WHATSAPP_BUSINESS_PKG) }
+            Text(
+                "Send message via",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 8.dp),
+            )
+            ListItem(
+                headlineContent = { Text("WhatsApp") },
+                leadingContent = { AppIcon(icon = whatsAppIcon, fallback = "💬") },
+                modifier = Modifier.clickable {
+                    showWhatsAppSheet = false
+                    lead?.phone?.let { context.launchWhatsApp(it, WHATSAPP_PKG) }
+                },
+            )
+            ListItem(
+                headlineContent = { Text("WhatsApp Business") },
+                leadingContent = { AppIcon(icon = whatsAppBusinessIcon, fallback = "💼") },
+                modifier = Modifier.clickable {
+                    showWhatsAppSheet = false
+                    lead?.phone?.let { context.launchWhatsApp(it, WHATSAPP_BUSINESS_PKG) }
+                },
+            )
+            Spacer(Modifier.height(16.dp))
+        }
+    }
+}
+
+@Composable
+private fun AppIcon(icon: ImageBitmap?, fallback: String) {
+    if (icon != null) {
+        Image(
+            bitmap = icon,
+            contentDescription = null,
+            modifier = Modifier.size(32.dp),
+        )
+    } else {
+        Text(fallback, fontSize = 24.sp)
     }
 }
 
@@ -748,4 +815,39 @@ private fun Context.shareLead(lead: Lead) {
     startActivity(Intent.createChooser(sendIntent, "Share lead via"))
 }
 
-private const val LEAD_LINK_BASE = "https://friskytrails.com/leads/"
+private const val LEAD_LINK_BASE = "https://friskytrails-crm.vercel.app/leads/"
+
+private const val WHATSAPP_PKG = "com.whatsapp"
+private const val WHATSAPP_BUSINESS_PKG = "com.whatsapp.w4b"
+
+private fun Context.isPackageInstalled(packageName: String): Boolean =
+    try {
+        packageManager.getPackageInfo(packageName, 0)
+        true
+    } catch (e: PackageManager.NameNotFoundException) {
+        false
+    }
+
+private fun Context.launchWhatsApp(phone: String, packageName: String?) {
+    val url = formatWhatsAppUrl(phone)
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+    if (packageName != null) intent.setPackage(packageName)
+    try {
+        startActivity(intent)
+    } catch (e: Exception) {
+        startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+    }
+}
+
+private fun Context.loadAppIcon(packageName: String): ImageBitmap? = try {
+    val drawable = packageManager.getApplicationIcon(packageName)
+    val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 96
+    val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 96
+    val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+    val canvas = Canvas(bitmap)
+    drawable.setBounds(0, 0, canvas.width, canvas.height)
+    drawable.draw(canvas)
+    bitmap.asImageBitmap()
+} catch (e: Exception) {
+    null
+}

@@ -48,75 +48,77 @@ fun LeadsListScreen(
 
     Scaffold(
         topBar = {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(CrmPrimary, CrmSecondary)
-                        )
-                    )
-            ) {
-                Row(
-                    Modifier
+            Column {
+                Box(
+                    modifier = Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Back",
-                            tint = Color.White,
+                        .background(
+                            Brush.horizontalGradient(
+                                colors = listOf(CrmPrimary, CrmSecondary)
+                            )
                         )
+                ) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onBack) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White,
+                            )
+                        }
+                        Text(
+                            "Leads (${state.leads.size})",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { viewModel.sync(force = true) }) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.White)
+                        }
+                        Box {
+                            TextButton(onClick = { showSortMenu = true }) {
+                                Text("Sort ▾", color = Color.White, fontSize = 13.sp)
+                            }
+                            DropdownMenu(
+                                expanded = showSortMenu,
+                                onDismissRequest = { showSortMenu = false },
+                            ) {
+                                DropdownMenuItem(
+                                    text = { Text("By due date") },
+                                    onClick = { viewModel.setSortOrder(SortOrder.BY_DUE_DATE); showSortMenu = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("By age") },
+                                    onClick = { viewModel.setSortOrder(SortOrder.BY_AGE); showSortMenu = false }
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("By name") },
+                                    onClick = { viewModel.setSortOrder(SortOrder.BY_NAME); showSortMenu = false }
+                                )
+                            }
+                        }
                     }
-                    Text(
-                        "Leads (${state.leads.size})",
+                }
+                if (state.isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
                         color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
+                        trackColor = CrmPrimary.copy(alpha = 0.3f)
                     )
-                    IconButton(onClick = { viewModel.sync() }) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = Color.White)
-                    }
-                    Box {
-                        TextButton(onClick = { showSortMenu = true }) {
-                            Text("Sort ▾", color = Color.White, fontSize = 13.sp)
-                        }
-                        DropdownMenu(
-                            expanded = showSortMenu,
-                            onDismissRequest = { showSortMenu = false },
-                        ) {
-                            DropdownMenuItem(
-                                text = { Text("By due date") },
-                                onClick = { viewModel.setSortOrder(SortOrder.BY_DUE_DATE); showSortMenu = false }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("By age") },
-                                onClick = { viewModel.setSortOrder(SortOrder.BY_AGE); showSortMenu = false }
-                            )
-                            DropdownMenuItem(
-                                text = { Text("By name") },
-                                onClick = { viewModel.setSortOrder(SortOrder.BY_NAME); showSortMenu = false }
-                            )
-                        }
-                    }
                 }
             }
         }
     ) { innerPadding ->
-        if (state.isLoading && state.leads.isEmpty()) {
-            Box(
-                Modifier.fillMaxSize().padding(innerPadding),
-                contentAlignment = Alignment.Center,
-            ) {
-                CircularProgressIndicator(color = CrmPrimary)
-            }
-        } else {
+        run {
             Column(
                 Modifier
                     .fillMaxSize()
@@ -124,21 +126,26 @@ fun LeadsListScreen(
                     .padding(innerPadding)
             ) {
                 if (state.leads.isEmpty()) {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("👥", fontSize = 48.sp)
-                            Spacer(Modifier.height(12.dp))
-                            Text(
-                                "No leads yet",
-                                fontWeight = FontWeight.SemiBold,
-                                fontSize = 18.sp,
-                                color = CrmOnBackground,
-                            )
-                            Text(
-                                "Pull to refresh or tap Sync",
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                fontSize = 13.sp,
-                            )
+                    // Only the settled empty state ("No leads yet") once a sync has actually
+                    // completed. Before that, stay blank — the top-bar progress bar signals the
+                    // first load, so we never flash "No leads yet" at a user who does have leads.
+                    if (state.hasSynced) {
+                        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Text("👥", fontSize = 48.sp)
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    "No leads yet",
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 18.sp,
+                                    color = CrmOnBackground,
+                                )
+                                Text(
+                                    "Pull to refresh or tap Sync",
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 13.sp,
+                                )
+                            }
                         }
                     }
                 } else {

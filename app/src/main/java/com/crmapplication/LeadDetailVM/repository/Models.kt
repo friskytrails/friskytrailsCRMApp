@@ -30,6 +30,7 @@ data class Lead(
     val statusChangedAt: Long? = null,
     val createdAt: Long,
     val dueDate: Long?,
+    val assignedAt: Long? = null,
     val notes: List<Note> = emptyList(),
 )
 
@@ -138,6 +139,7 @@ fun LeadEntity.toDomain() = Lead(
     statusChangedAt = statusChangedAt,
     createdAt = createdAt,
     dueDate = dueDate,
+    assignedAt = assignedAt,
 )
 
 fun ApiLeadDto.toEntity(): LeadEntity {
@@ -189,7 +191,7 @@ fun ApiNoteDto.toEntity(leadId: String): NoteEntity {
         authorName = author?.trim()?.takeIf { it.isNotBlank() },
         authorId = authorId?.trim()?.takeIf { it.isNotBlank() },
         imageUrl = imageUrl?.trim()?.takeIf { it.isNotBlank() },
-        timeLabel = timestamp?.trim()?.takeIf { it.isNotBlank() },
+        timeLabel = null,
     )
 }
 

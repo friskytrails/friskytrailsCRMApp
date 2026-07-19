@@ -25,6 +25,11 @@ data class LeadEntity(
     val statusChangedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val dueDate: Long? = null,
+
+    // Cutoff for call-log analytics: the moment this lead first landed locally for this agent.
+    // Set once on first sync (see LeadsRepository.syncLeads), never overwritten. Calls before
+    // this instant belong to a prior owner and are excluded from history, counts, and pushes.
+    val assignedAt: Long? = null,
 )
 
 @Entity(

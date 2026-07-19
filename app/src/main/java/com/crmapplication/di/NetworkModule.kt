@@ -4,6 +4,7 @@ import com.crmapplication.LeadDetailVM.remote.AgentsApi
 import com.crmapplication.LeadDetailVM.remote.ApiConfig
 import com.crmapplication.LeadDetailVM.remote.AuthApi
 import com.crmapplication.LeadDetailVM.remote.CallsApi
+import com.crmapplication.LeadDetailVM.remote.ConfigApi
 import com.crmapplication.LeadDetailVM.remote.LeadsApi
 import com.crmapplication.LeadDetailVM.remote.UploadApi
 import com.salescrm.BuildConfig
@@ -71,6 +72,11 @@ object NetworkModule {
     @Singleton
     fun provideCallsApi(@Named("leads") retrofit: Retrofit): CallsApi =
         retrofit.create(CallsApi::class.java)
+
+    @Provides
+    @Singleton
+    fun provideConfigApi(@Named("leads") retrofit: Retrofit): ConfigApi =
+        retrofit.create(ConfigApi::class.java)
 
     private fun String.withTrailingSlash(): String =
         if (endsWith("/")) this else "$this/"

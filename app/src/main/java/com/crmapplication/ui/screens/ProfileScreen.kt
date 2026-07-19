@@ -87,26 +87,35 @@ fun ProfileScreen(
     Scaffold(
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
-            Box(
-                Modifier
-                    .fillMaxWidth()
-                    .background(Brush.horizontalGradient(listOf(CrmPrimary, CrmSecondary)))
-            ) {
-                Row(
+            Column {
+                Box(
                     Modifier
                         .fillMaxWidth()
-                        .statusBarsPadding()
-                        .padding(horizontal = 8.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
+                        .background(Brush.horizontalGradient(listOf(CrmPrimary, CrmSecondary)))
                 ) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .padding(horizontal = 8.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                        }
+                        Text(
+                            "Profile",
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 18.sp,
+                        )
                     }
-                    Text(
-                        "Profile",
+                }
+                if (state.isLoading) {
+                    LinearProgressIndicator(
+                        modifier = Modifier.fillMaxWidth(),
                         color = Color.White,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 18.sp,
+                        trackColor = CrmPrimary.copy(alpha = 0.3f),
                     )
                 }
             }

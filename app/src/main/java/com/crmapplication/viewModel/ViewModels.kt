@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.crmapplication.LeadDetailVM.repository.AuthRepository
 import com.crmapplication.LeadDetailVM.repository.CallLogSyncRepository
+import com.crmapplication.LeadDetailVM.repository.ConfigRepository
+import com.crmapplication.LeadDetailVM.repository.DEFAULT_PRODUCTS
 import com.crmapplication.LeadDetailVM.repository.EmailNotVerifiedException
 import com.crmapplication.LeadDetailVM.repository.Lead
 import com.crmapplication.LeadDetailVM.repository.LeadsRepository
@@ -398,6 +400,8 @@ class DashboardViewModel @Inject constructor(
     val state: StateFlow<DashboardUiState> = _state.asStateFlow()
 
     init {
+        // Paint the last computed dashboard instantly if this VM was just recreated (nav re-entry).
+        repo.lastData?.let { cached -> _state.update { it.copy(isLoading = false, data = cached) } }
         load()
 
         viewModelScope.launch {
@@ -405,7 +409,7 @@ class DashboardViewModel @Inject constructor(
                 .debounce(500)
                 .collect {
                     logNewCalls()
-                    load(silent = true)
+                    load(triggerSync = false)
                 }
         }
     }
@@ -414,28 +418,43 @@ class DashboardViewModel @Inject constructor(
         viewModelScope.launch { runCatching { callLogSyncRepo.syncNewCalls() } }
     }
 
-    fun load(silent: Boolean = false) {
-
+    /**
+     * Loads the dashboard without blocking first paint on the network. Seeds from the cached result,
+     * then collects the two-stage flow (local-first, then network-refined). Lead sync runs detached;
+     * when it lands we recompute once ([triggerSync] = false) so booking counts refresh — never
+     * re-triggering sync, which would loop. [isLoading] drives the thin top-bar progress bar; the
+     * full-screen loader only shows when there is genuinely no data yet.
+     */
+    fun load(triggerSync: Boolean = true) {
         if (!repo.hasCallLogPermission()) {
             _state.update { it.copy(isLoading = false, needsPermission = true) }
             return
         }
+
+        _state.update {
+            it.copy(data = it.data ?: repo.lastData, needsPermission = false, error = null, isLoading = true)
+        }
+
         viewModelScope.launch {
-            _state.update {
+            runCatching {
+                repo.getDashboard().collect { data ->
+                    _state.update { it.copy(data = data) }
+                }
+            }.onFailure { e -> _state.update { it.copy(error = e.message) } }
+            _state.update { it.copy(isLoading = false) }
+        }
 
-                it.copy(isLoading = it.data == null && !silent, needsPermission = false, error = null)
+        if (triggerSync) {
+            viewModelScope.launch {
+                leadsRepo.syncLeads()
+                load(triggerSync = false)
             }
-
-            leadsRepo.syncLeads()
-            repo.getDashboard()
-                .onSuccess { data -> _state.update { it.copy(isLoading = false, data = data) } }
-                .onFailure { e -> _state.update { it.copy(isLoading = false, error = e.message) } }
         }
 
         logNewCalls()
     }
 
-    fun refresh() = load(silent = true)
+    fun refresh() = load()
 
     fun onPermissionResult(granted: Boolean) {
         if (granted) load()
@@ -466,9 +485,20 @@ data class LeadsUiState(
     val activeProduct: String? = null,
     val searchQuery: String = "",
 
+    /**
+     * Product catalog for the Add Lead dropdown, driven by `GET /api/config`. Server-owned, so a
+     * product added on the backend appears here without an app release. Distinct from
+     * [availableProducts], which is derived from the leads on hand and drives the list filter.
+     */
+    val products: List<String> = DEFAULT_PRODUCTS,
+
     val isCreating: Boolean = false,
     val createSuccess: Boolean = false,
     val error: String? = null,
+
+    // True once the first network sync has completed. Distinguishes "still loading, never synced"
+    // (show progress, not the empty state) from "synced and genuinely empty" (show "No leads yet").
+    val hasSynced: Boolean = false,
 ) {
 
     val visibleLeads: List<Lead>
@@ -510,6 +540,7 @@ data class LeadsUiState(
 @HiltViewModel
 class LeadsViewModel @Inject constructor(
     private val repo: LeadsRepository,
+    private val configRepo: ConfigRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LeadsUiState(isLoading = true))
@@ -521,14 +552,35 @@ class LeadsViewModel @Inject constructor(
                 _state.update { it.copy(isLoading = false, leads = sortedLeads(leads, it.sortOrder)) }
             }
         }
+        // Separate collector: the catalog is server-owned and refreshes on its own schedule, so a
+        // fetch pushes new products into state while the Add Lead screen is open.
+        viewModelScope.launch {
+            configRepo.observeProducts().collect { products ->
+                _state.update { it.copy(products = products) }
+            }
+        }
         sync()
+        refreshProducts()
     }
 
-    fun sync() {
+    /**
+     * Pulls the product catalog. Safe to call on every Add Lead entry — the repository throttles
+     * back-to-back requests, and a failure is intentionally swallowed rather than written to
+     * [LeadsUiState.error], which drives the Add Lead snackbar: the cached list still works, so a
+     * stale dropdown shouldn't raise an error the user can do nothing about.
+     */
+    fun refreshProducts(force: Boolean = false) {
+        viewModelScope.launch { configRepo.syncProducts(force = force) }
+    }
+
+    /** [force] = true for the manual refresh button (bypass the repository sync throttle). */
+    fun sync(force: Boolean = false) {
         viewModelScope.launch {
-            repo.syncLeads().onFailure { e ->
-                _state.update { it.copy(error = e.message) }
-            }
+            repo.syncLeads(force = force)
+                .onFailure { e -> _state.update { it.copy(error = e.message) } }
+            // Mark synced regardless of outcome: a failed sync still means we've tried, so the empty
+            // state ("No leads yet") is now truthful rather than a premature flash during first load.
+            _state.update { it.copy(hasSynced = true) }
         }
     }
 
@@ -578,8 +630,10 @@ class LeadsViewModel @Inject constructor(
 
 data class LeadDetailUiState(
     val lead: Lead? = null,
+    val isLoading: Boolean = false,
     val notes: List<Note> = emptyList(),
     val noteSaveSuccess: Boolean = false,
+    val isSavingNote: Boolean = false,
     val error: String? = null,
 
     val isUploading: Boolean = false,
@@ -642,7 +696,13 @@ class LeadDetailViewModel @Inject constructor(
     }
 
     fun refresh() {
-        _state.value.lead?.phone?.let { refreshCallLogMatch(it) }
+        val phone = _state.value.lead?.phone
+        viewModelScope.launch {
+            _state.update { it.copy(isLoading = true) }
+            repo.syncLeads()
+            if (phone != null) refreshCallLogMatch(phone)
+            _state.update { it.copy(isLoading = false) }
+        }
     }
 
     private fun refreshCallLogMatch(number: String) {
@@ -651,8 +711,11 @@ class LeadDetailViewModel @Inject constructor(
             return
         }
         viewModelScope.launch {
-            val calls = callLogReader.callsForNumber(number)
-            val booking = bookingFromCalls(calls)
+            // Cutoff: only this lead's post-assignment calls. Count cumulatively from assignment
+            // (todayOnly = false), not just today — this is the lead's running history.
+            val since = _state.value.lead?.assignedAt
+            val calls = callLogReader.callsForNumber(number, since)
+            val booking = bookingFromCalls(calls, todayOnly = false)
             val callLabel = callLabelFor(calls)
             _state.update { s ->
                 s.copy(
@@ -712,7 +775,10 @@ class LeadDetailViewModel @Inject constructor(
 
     private fun loadCallsFor(number: String) {
         viewModelScope.launch {
-            val calls = callLogReader.callsForNumber(number)
+            // Same assignment cutoff as the count: the history dialog shows only calls made after
+            // this lead was assigned to the agent — nothing from a prior owner.
+            val since = _state.value.lead?.assignedAt
+            val calls = callLogReader.callsForNumber(number, since)
             _state.update {
 
                 if (it.callHistory.number != number) it
@@ -723,11 +789,12 @@ class LeadDetailViewModel @Inject constructor(
 
     fun addNote(text: String) {
         val leadId = _state.value.lead?.id ?: return
-        if (text.isBlank()) return
+        if (text.isBlank() || _state.value.isSavingNote) return
         viewModelScope.launch {
+            _state.update { it.copy(isSavingNote = true, error = null) }
             repo.addNote(leadId, text)
-                .onSuccess { _state.update { it.copy(noteSaveSuccess = true) } }
-                .onFailure { e -> _state.update { it.copy(error = e.message) } }
+                .onSuccess { _state.update { it.copy(isSavingNote = false, noteSaveSuccess = true) } }
+                .onFailure { e -> _state.update { it.copy(isSavingNote = false, error = e.message) } }
         }
     }
 

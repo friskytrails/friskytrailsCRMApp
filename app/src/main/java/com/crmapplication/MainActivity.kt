@@ -13,6 +13,8 @@ import com.crmapplication.ui.theme.CRMApplicationTheme
 import com.crmapplication.utils.ThemeManager
 import dagger.hilt.android.AndroidEntryPoint
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 import javax.inject.Inject
 
 @HiltAndroidApp
@@ -26,9 +28,17 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
 
-            val darkPref by themeManager.darkMode.collectAsState(initial = null)
+        // Resolve the saved theme BEFORE the first composition. Collecting with initial = null made
+        // the app paint the system theme for one frame, then flip to the saved value once DataStore
+        // emitted — a visible flash (made worse by the cross-fade). This one-shot blocking read is a
+        // fast local DataStore lookup, so frame 1 is already the correct theme.
+        val initialDark = runBlocking { themeManager.darkMode.first() }
+
+        setContent {
+            // Seed with the pre-resolved value so there's no startup flip; keep collecting so the
+            // Profile toggle still animates live.
+            val darkPref by themeManager.darkMode.collectAsState(initial = initialDark)
             val darkTheme = darkPref ?: isSystemInDarkTheme()
             CRMApplicationTheme(darkTheme = darkTheme) {
                 CrmNavGraph()

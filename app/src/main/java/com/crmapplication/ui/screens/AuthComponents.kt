@@ -41,7 +41,8 @@ import com.crmapplication.viewModel.AuthViewModel
 fun AuthHeader(subtitle: String) {
     Surface(
         shape = CircleShape,
-        color = MaterialTheme.colorScheme.surface,
+        // Logo plate stays white in both themes — the brand mark reads the same on light and dark.
+        color = Color.White,
         modifier = Modifier
             .size(104.dp)
             .shadow(elevation = 12.dp, shape = CircleShape),
