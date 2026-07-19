@@ -191,6 +191,7 @@ fun DashboardScreen(
 
                     Spacer(Modifier.height(20.dp))
                 }
+                 
 
                 state.error?.let {
                     Spacer(Modifier.height(12.dp))
@@ -414,7 +415,9 @@ private fun MonthlyCard(stats: MonthlyStats) {
 
             PerformanceRow("🎯", "Monthly Target", stats.monthlyTarget)
             PerformanceRow("📘", "Booking Count", stats.bookingCount)
-            PerformanceRow("🗓️", "Attendance", stats.attendance, showDivider = false)
+            PerformanceRow("🗓️", "Monthly Attendance", stats.attendance, showDivider = false)
         }
     }
 }
+
+

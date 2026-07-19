@@ -2,6 +2,7 @@ package com.crmapplication.LeadDetailVM.repository
 
 import android.net.Uri
 import android.util.Base64
+import android.util.Log
 import com.crmapplication.LeadDetailVM.local.LeadDao
 import com.crmapplication.LeadDetailVM.local.LeadEntity
 import com.crmapplication.LeadDetailVM.local.NoteDao
@@ -12,6 +13,8 @@ import com.crmapplication.LeadDetailVM.remote.AddLeadNoteRequest
 import com.crmapplication.LeadDetailVM.remote.AddNoteRequest
 import com.crmapplication.LeadDetailVM.remote.AgentMetricsDto
 import com.crmapplication.LeadDetailVM.remote.AgentsApi
+import com.crmapplication.LeadDetailVM.remote.AttendanceLogDto
+import com.crmapplication.LeadDetailVM.remote.MonthlyAttendanceDto
 import com.crmapplication.LeadDetailVM.remote.ApiConfig
 import com.crmapplication.LeadDetailVM.remote.ApiNoteDto
 import com.crmapplication.LeadDetailVM.remote.ApiService
@@ -31,6 +34,7 @@ import com.crmapplication.LeadDetailVM.remote.UpdateProfileRequest
 import com.crmapplication.LeadDetailVM.remote.UpdateBookingRequest
 import com.crmapplication.LeadDetailVM.remote.UpdateDatesRequest
 import com.crmapplication.LeadDetailVM.remote.UpdateLabelsRequest
+import com.crmapplication.LeadDetailVM.remote.UpdateMetricsRequest
 import com.crmapplication.LeadDetailVM.remote.UpdateStatusRequest
 import com.crmapplication.LeadDetailVM.remote.UploadApi
 import com.crmapplication.LeadDetailVM.remote.UploadResponse
@@ -200,19 +204,92 @@ class DashboardRepository @Inject constructor(
     private val session: SessionManager,
 ) {
 
+    /** yyyy-MM-dd of the day we last successfully pushed "Present"; guards against re-pushing every refresh. */
+    private var lastAttendancePush: String? = null
+
     fun hasCallLogPermission(): Boolean = callLogReader.hasPermission()
 
     fun observeCallLogChanges(): Flow<Unit> = callLogReader.observeChanges()
 
-    private suspend fun fetchAgentMetrics(): AgentMetricsDto? {
-        val token = session.getToken()?.takeIf { it.isNotBlank() } ?: return null
+    private data class AgentAuth(val id: String, val bearer: String)
 
+    private fun resolveAgentAuth(): AgentAuth? {
+        val token = session.getToken()?.takeIf { it.isNotBlank() } ?: return null
         val id = session.getAgentId()?.takeIf { it.isNotBlank() }
             ?: agentIdFromToken(token)
             ?: return null
         val bearer = if (token.startsWith("Bearer ", ignoreCase = true)) token else "Bearer $token"
-        return runCatching { agentsApi.getMetrics(id = id, authorization = bearer) }.getOrNull()
+        return AgentAuth(id, bearer)
     }
+
+    private suspend fun fetchAgentMetrics(): AgentMetricsDto? {
+        val auth = resolveAgentAuth() ?: return null
+        return runCatching { agentsApi.getMetrics(id = auth.id, authorization = auth.bearer) }.getOrNull()
+    }
+
+    /** Best-effort: admin-set daily attendance logs (P/A per date). Empty on any failure. */
+    private suspend fun fetchAttendanceLogs(): List<AttendanceLogDto> {
+        val auth = resolveAgentAuth() ?: return emptyList()
+        return runCatching { agentsApi.getAttendance(id = auth.id, authorization = auth.bearer) }
+            .getOrNull().orEmpty()
+    }
+
+    /** Best-effort: server-side authoritative monthly P/A counts. Null on any failure. */
+    private suspend fun fetchMonthlyAttendance(month: Int, year: Int): MonthlyAttendanceDto? {
+        val auth = resolveAgentAuth() ?: return null
+        return runCatching {
+            agentsApi.getMonthlyAttendance(
+                id = auth.id,
+                month = month,
+                year = year,
+                authorization = auth.bearer,
+            )
+        }.onSuccess {
+            Log.d(TAG, "monthlyAttendance id=${auth.id} $month/$year -> present=${it.present} absent=${it.absent}")
+        }.onFailure {
+            Log.w(TAG, "monthlyAttendance id=${auth.id} $month/$year FAILED, falling back to local count", it)
+        }.getOrNull()
+    }
+
+    /**
+     * Best-effort: if the agent has any call activity today, mark them Present on the server.
+     * Runs at most once per day (in-memory guard), only flips [lastAttendancePush] on success so
+     * a failed push retries on the next refresh. Never surfaces errors — attendance is derived,
+     * not user-entered, so a failure here must not break the dashboard.
+     */
+    private suspend fun syncTodayAttendance(
+        allCalls: List<CallLogEntry>,
+        startOfDay: Long,
+        endOfDay: Long,
+    ) {
+        val today = formatApiDate(startOfDay)
+        if (lastAttendancePush == today) return
+
+        val presentToday = allCalls.any { it.dateMillis in startOfDay until endOfDay }
+        if (!presentToday) return
+
+        updateMetrics(attendance = "P", attendanceDate = today)
+            .onSuccess { lastAttendancePush = today }
+    }
+
+    suspend fun updateMetrics(
+        attendance: String? = null,
+        attendanceDate: String? = null,
+        monthlyTarget: Int? = null,
+        targetCompleted: Int? = null,
+    ): Result<AgentMetricsDto> = runCatching {
+        val auth = resolveAgentAuth() ?: error("Not logged in.")
+        agentsApi.updateMetrics(
+            id = auth.id,
+            authorization = auth.bearer,
+            body = UpdateMetricsRequest(
+                attendance = attendance,
+                attendanceDate = attendanceDate,
+                monthlyTarget = monthlyTarget,
+                targetCompleted = targetCompleted,
+            ),
+        )
+    }.mapApiError()
 
     private fun agentIdFromToken(token: String): String? = runCatching {
         val payload = token.removePrefix("Bearer ").trim().split(".").getOrNull(1) ?: return null
@@ -240,19 +317,42 @@ class DashboardRepository @Inject constructor(
             set(Calendar.MILLISECOND, 0)
         }
         val startOfMonth = startOfMonthCal.timeInMillis
-        val daysInMonth = startOfMonthCal.getActualMaximum(Calendar.DAY_OF_MONTH)
 
         val allCalls = callLogReader.readAll()
 
+        syncTodayAttendance(allCalls, startOfDay, endOfDay)
+
         val metrics = fetchAgentMetrics()
+
+        // Admin-set attendance: today's status drives the daily card; the whole month's P/A counts
+        // drive the monthly card. Both are best-effort — an empty list just shows "—" / "0P / 0A".
+        val attendanceLogs = fetchAttendanceLogs()
+        val todayKey = formatApiDate(startOfDay)
+        val monthPrefix = todayKey.take(7) // "yyyy-MM"
+
+        val todayStatus = attendanceLogs.firstOrNull { it.date == todayKey }
+            ?.status?.trim()?.uppercase()
+            ?: metrics?.attendance?.trim()?.uppercase()
+
+        // Authoritative monthly P/A counts from the server; fall back to counting the log list
+        // locally if that best-effort call fails (attendance must never break the dashboard).
+        val monthLogs = attendanceLogs.filter { it.date.orEmpty().startsWith(monthPrefix) }
+        val monthlyAttendance = fetchMonthlyAttendance(
+            month = now.get(Calendar.MONTH) + 1,
+            year = now.get(Calendar.YEAR),
+        )
+        val presentCount = monthlyAttendance?.present
+            ?: monthLogs.count { it.status?.trim()?.uppercase() == "P" }
+        val absentCount = monthlyAttendance?.absent
+            ?: monthLogs.count { it.status?.trim()?.uppercase() == "A" }
 
         val leads = leadDao.getAllLeads().first()
         val leadKeys = leads
             .mapNotNull { it.phone.normalizedPhoneKey().ifEmpty { null } }
             .toSet()
 
-        val daily = buildDailyStats(allCalls, startOfDay, endOfDay, now.timeInMillis, metrics, leadKeys)
-        val monthly = buildMonthlyStats(allCalls, startOfMonth, endOfDay, daysInMonth, metrics, leads)
+        val daily = buildDailyStats(allCalls, startOfDay, endOfDay, now.timeInMillis, todayStatus, leadKeys)
+        val monthly = buildMonthlyStats(startOfMonth, presentCount, absentCount, metrics, leads)
 
         DashboardData(daily = daily, monthly = monthly)
     }
@@ -262,7 +362,7 @@ class DashboardRepository @Inject constructor(
         startOfDay: Long,
         endOfDay: Long,
         nowMillis: Long,
-        metrics: AgentMetricsDto?,
+        todayStatus: String?,
         leadKeys: Set<String>,
     ): DashboardStats {
 
@@ -301,25 +401,21 @@ class DashboardRepository @Inject constructor(
             lastCall = today.lastOrNull()?.dateMillis?.let(::formatClockTime),
             idleTime = formatIdleTime(computeIdleSeconds(idleBasis)),
 
-            attendance = when (metrics?.attendance?.trim()?.uppercase()) {
+            attendance = when (todayStatus) {
                 "P" -> "Present"
                 "A" -> "Absent"
-                else -> if (today.isNotEmpty()) "Present" else "—"
+                else -> "—"
             },
         )
     }
 
     private fun buildMonthlyStats(
-        allCalls: List<CallLogEntry>,
         startOfMonth: Long,
-        endOfDay: Long,
-        daysInMonth: Int,
+        presentCount: Int,
+        absentCount: Int,
         metrics: AgentMetricsDto?,
         leads: List<LeadEntity>,
     ): MonthlyStats {
-
-        val monthCalls = allCalls.filter { it.dateMillis in startOfMonth until endOfDay }
-        val presentDays = presentDayCount(monthCalls)
 
         val bookedLeads = leads.count { it.status.equals("Booked", ignoreCase = true) }
 
@@ -334,12 +430,13 @@ class DashboardRepository @Inject constructor(
             monthlyTarget = monthlyTarget,
             bookingCount = "$bookedLeads / ${leads.size}",
             totalSaleAmount = "0 / 0",
-            attendance = "$presentDays / $daysInMonth",
+            attendance = "${presentCount}P / ${absentCount}A",
         )
     }
 
     private companion object {
         const val DAY_MILLIS = 24L * 60 * 60 * 1000
+        const val TAG = "DashboardRepo"
     }
 }
 
