@@ -59,11 +59,101 @@ class CallLogBookingTest {
         val body = bookingFromCalls(listOf(out, inc), now = now)
         assertNotNull(body)
         body!!
-        assertEquals("one outgoing call today", 1, body.totalDial)
+        assertEquals("one outgoing plus one answered inbound", 2, body.totalDial)
         assertEquals("today-scoped: totalDial equals dailyDial", body.totalDial, body.dailyDial)
         assertEquals("both today's calls connected (duration > 0)", 2, body.connected)
         assertEquals("120s + 45s = 165s → 2:45", "2:45", body.talkTime)
         assertEquals("today-scoped: talkTime equals dailyTalkTime", body.talkTime, body.dailyTalkTime)
+    }
+
+    /**
+     * A dial is any call the agent actually handled, not just an outgoing one — so an answered
+     * inbound call counts. Counting only [CallType.OUTGOING] was what made the app under-report
+     * against the web historical report (observed: app 2 dials vs web 5 for the same day).
+     */
+    @Test
+    fun `an answered inbound-only day still reports dials`() {
+        val now = 1_700_100_000_000L
+        val inc = incoming.copy(id = 30L, dateMillis = now - 1_000L, durationSeconds = 45L)
+
+        val body = bookingFromCalls(listOf(inc), now = now)!!
+        assertEquals("an inbound lead call is a dial", 1, body.totalDial)
+    }
+
+    /**
+     * A missed call took no effort from the agent — the lead rang and nobody picked up — so counting
+     * it would inflate the figure with calls the agent never handled.
+     */
+    @Test
+    fun `missed calls do not count toward dials`() {
+        val now = 1_700_100_000_000L
+        val missed = dialed.copy(
+            id = 31L,
+            type = CallType.MISSED,
+            dateMillis = now - 1_000L,
+            durationSeconds = 0L,
+        )
+
+        val body = bookingFromCalls(listOf(missed), now = now)!!
+        assertEquals("a missed call is not a dial", 0, body.totalDial)
+        assertEquals("a missed call never connected", 0, body.connected)
+    }
+
+    /**
+     * An unanswered inbound call is a missed call by another name: the provider sometimes files it as
+     * INCOMING with a zero duration rather than MISSED, so the rule keys off the duration instead of
+     * trusting the type alone.
+     */
+    @Test
+    fun `an unanswered inbound call does not count`() {
+        val now = 1_700_100_000_000L
+        val unanswered = incoming.copy(id = 34L, dateMillis = now - 1_000L, durationSeconds = 0L)
+
+        val body = bookingFromCalls(listOf(unanswered), now = now)!!
+        assertEquals(0, body.totalDial)
+    }
+
+    /**
+     * Outgoing is the asymmetric case: it counts even at zero duration, because the agent made the
+     * attempt regardless of whether the lead picked up.
+     */
+    @Test
+    fun `an unanswered outgoing call still counts as a dial`() {
+        val now = 1_700_100_000_000L
+        val unanswered = dialed.copy(id = 35L, dateMillis = now - 1_000L, durationSeconds = 0L)
+
+        val body = bookingFromCalls(listOf(unanswered), now = now)!!
+        assertEquals("the agent still tried", 1, body.totalDial)
+        assertEquals("but nobody talked", 0, body.connected)
+    }
+
+    /**
+     * Connected can no longer exceed dials. Under the outgoing-only rule an answered inbound call
+     * produced connected=1 with dials=0 — a card reading "0 dials · 1 connected".
+     */
+    @Test
+    fun `connected never exceeds dials`() {
+        val now = 1_700_100_000_000L
+        val out = dialed.copy(id = 32L, dateMillis = now - 3_000L, durationSeconds = 0L)
+        val inc = incoming.copy(id = 33L, dateMillis = now - 1_000L, durationSeconds = 45L)
+
+        val body = bookingFromCalls(listOf(out, inc), now = now)!!
+        assertEquals(2, body.totalDial)
+        assertEquals(1, body.connected)
+        assertTrue("connected <= dials", body.connected <= body.totalDial)
+    }
+
+    /**
+     * The lead-detail directional breakdown is deliberately unaffected: it shows Outgoing and
+     * Incoming side by side, so its outgoing figure must stay direction-filtered or the two chips
+     * would double-count the same call.
+     */
+    @Test
+    fun `the directional breakdown still separates outgoing from incoming`() {
+        val stats = callStats(calls)
+        assertEquals("one outgoing", 1, stats.dialedCount)
+        assertEquals("one incoming", 1, stats.incomingCount)
+        assertEquals("two calls in total", 2, stats.totalCalls)
     }
 
     @Test
@@ -95,7 +185,7 @@ class CallLogBookingTest {
         val body = bookingFromCalls(listOf(todayA, todayB, yesterday), now = now)!!
 
         assertEquals("today-scoped: yesterday's call is excluded", 2, body.totalDial)
-        assertEquals("only today's outgoing calls", 2, body.dailyDial)
+        assertEquals("only today's calls", 2, body.dailyDial)
         assertEquals("today's talk time 60s + 30s = 90s → 1:30", "1:30", body.dailyTalkTime)
         assertEquals("talkTime is today-scoped too", "1:30", body.talkTime)
     }

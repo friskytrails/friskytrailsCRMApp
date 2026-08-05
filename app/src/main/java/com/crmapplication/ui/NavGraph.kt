@@ -11,6 +11,7 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.crmapplication.ui.screens.AddLeadScreen
 import com.crmapplication.ui.screens.ApprovalWaitingScreen
+import com.crmapplication.ui.screens.BugReportsScreen
 import com.crmapplication.ui.screens.DashboardScreen
 import com.crmapplication.ui.screens.ForgotPasswordScreen
 import com.crmapplication.ui.screens.LeadDetailScreen
@@ -34,6 +35,7 @@ object Routes {
     const val LEADS         = "leads"
     const val ADD_LEAD      = "addLead"
     const val PROFILE       = "profile"
+    const val BUG_REPORTS   = "bugReports"
     const val LEAD_DETAIL   = "lead/{leadId}"
     fun leadDetail(id: String) = "lead/$id"
 }
@@ -169,9 +171,13 @@ fun CrmNavGraph() {
                     }
                 },
 
-                onProfileUpdated = { authViewModel.refreshAgentInfo() },
+                onOpenBugReports = { navController.navigate(Routes.BUG_REPORTS) },
                 onBack = { navController.popBackStack() },
             )
+        }
+
+        composable(Routes.BUG_REPORTS) {
+            BugReportsScreen(onBack = { navController.popBackStack() })
         }
 
         composable(Routes.LEADS) {

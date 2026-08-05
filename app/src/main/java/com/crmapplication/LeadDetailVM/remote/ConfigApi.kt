@@ -4,13 +4,18 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 
 /**
- * Global config (`key: GLOBAL_SETTINGS`) — currently just the product catalog shown in the
- * Add Lead dropdown. Admins overwrite it server-side via `PUT /api/config/products`; agents only
- * read, so that endpoint is deliberately not modelled here (it would 403 for every app user).
+ * Global config (`key: GLOBAL_SETTINGS`) — the server-owned lead statuses and product catalog.
+ * Admins overwrite it server-side; agents only read, so the write endpoints are deliberately not
+ * modelled here (they would 403 for every app user).
+ *
+ * Both lists drive UI that used to be hardcoded, so a status or product added on the backend shows
+ * up across the app without an app release. Nullable because a partial config response must not
+ * fail the whole parse — a missing key means "keep what's cached".
  *
  * The `_id` / `key` / timestamps in the response are ignored — Gson drops unmapped fields.
  */
 data class GlobalConfigDto(
+    val statuses: List<String>? = null,
     val products: List<String>? = null,
 )
 

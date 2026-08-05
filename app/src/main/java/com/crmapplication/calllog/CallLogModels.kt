@@ -66,6 +66,26 @@ data class NumberCallStats(
     val hasCalls: Boolean get() = totalCalls > 0
 }
 
+/**
+ * Whether this call counts toward an agent's dial figures.
+ *
+ * The rule, which the Dashboard tile and the numbers pushed to the backend both read from here so
+ * they can't drift apart:
+ * - **Outgoing** always counts. The agent made the attempt, whether or not anyone picked up.
+ * - **Incoming** counts only when it was actually answered, which is what a non-zero duration means.
+ * - **Everything else does not** — missed, rejected and blocked calls took no effort from the agent,
+ *   so counting them would inflate the figure with calls they never handled.
+ *
+ * Direction-specific reporting is separate: [callStats] keeps its own outgoing/incoming/missed
+ * breakdown for the lead-detail screen, where the counts sit side by side and must not overlap.
+ */
+val CallLogEntry.countsAsDial: Boolean
+    get() = when (type) {
+        CallType.OUTGOING -> true
+        CallType.INCOMING -> durationSeconds > 0
+        else -> false
+    }
+
 fun callStats(calls: List<CallLogEntry>): NumberCallStats = NumberCallStats(
     totalCalls = calls.size,
     dialedCount = calls.count { it.type == CallType.OUTGOING },

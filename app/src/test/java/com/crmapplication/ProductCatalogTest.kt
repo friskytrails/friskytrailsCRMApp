@@ -1,7 +1,7 @@
 package com.crmapplication
 
 import com.crmapplication.LeadDetailVM.repository.DEFAULT_PRODUCTS
-import com.crmapplication.LeadDetailVM.repository.sanitizeProducts
+import com.crmapplication.LeadDetailVM.repository.sanitizeConfigList
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -16,14 +16,14 @@ class ProductCatalogTest {
         // The admin controls the order in the config document, so alphabetising it would override
         // a deliberate choice (e.g. best-sellers first).
         val fromServer = listOf("Spiti Package", "Adventure Activities", "Kerala Trip")
-        assertEquals(fromServer, sanitizeProducts(fromServer))
+        assertEquals(fromServer, sanitizeConfigList(fromServer))
     }
 
     @Test
     fun `blank and whitespace-only entries are dropped and names trimmed`() {
         assertEquals(
             listOf("Ladakh Package", "Others"),
-            sanitizeProducts(listOf("  Ladakh Package ", "", "   ", "Others")),
+            sanitizeConfigList(listOf("  Ladakh Package ", "", "   ", "Others")),
         )
     }
 
@@ -32,7 +32,7 @@ class ProductCatalogTest {
         // The backend rejects duplicates on write, but an older document may still hold them.
         assertEquals(
             listOf("Kerala Trip", "Others"),
-            sanitizeProducts(listOf("Kerala Trip", "KERALA TRIP", "kerala trip", "Others")),
+            sanitizeConfigList(listOf("Kerala Trip", "KERALA TRIP", "kerala trip", "Others")),
         )
     }
 
@@ -40,8 +40,8 @@ class ProductCatalogTest {
     fun `a missing or empty products field yields an empty list`() {
         // The repository treats empty as "nothing to apply" and keeps the previous cache, so the
         // dropdown never blanks out.
-        assertTrue(sanitizeProducts(null).isEmpty())
-        assertTrue(sanitizeProducts(emptyList()).isEmpty())
+        assertTrue(sanitizeConfigList(null).isEmpty())
+        assertTrue(sanitizeConfigList(emptyList()).isEmpty())
     }
 
     @Test
@@ -63,6 +63,6 @@ class ProductCatalogTest {
 
     @Test
     fun `the fallback itself survives sanitizing unchanged`() {
-        assertEquals(DEFAULT_PRODUCTS, sanitizeProducts(DEFAULT_PRODUCTS))
+        assertEquals(DEFAULT_PRODUCTS, sanitizeConfigList(DEFAULT_PRODUCTS))
     }
 }

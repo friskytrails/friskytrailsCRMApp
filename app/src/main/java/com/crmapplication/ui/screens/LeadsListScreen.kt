@@ -46,7 +46,24 @@ fun LeadsListScreen(
     val state by viewModel.state.collectAsState()
     var showSortMenu by remember { mutableStateOf(false) }
 
+    // Booking can fail (403 if the lead was reassigned, 400 on a rejected payload) and the form stays
+    // open on failure, so this screen needs somewhere to surface the message.
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(state.error) {
+        state.error?.let { message ->
+            snackbarHostState.showSnackbar(message)
+            viewModel.clearError()
+        }
+    }
+    LaunchedEffect(state.bookingSuccess) {
+        if (state.bookingSuccess) {
+            snackbarHostState.showSnackbar("Lead booked. Status is now locked.")
+            viewModel.clearBookingSuccess()
+        }
+    }
+
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
                 Box(
@@ -204,6 +221,7 @@ fun LeadsListScreen(
                             items(visible, key = { it.id }) { lead ->
                                 LeadCard(
                                     lead = lead,
+                                    statuses = state.statusOptions,
                                     onClick = { onLeadClick(lead) },
                                     onStatusChange = { newStatus -> viewModel.updateStatus(lead.id, newStatus) },
                                 )
@@ -214,43 +232,86 @@ fun LeadsListScreen(
             }
         }
     }
+
+    // Hoisted out of the Scaffold content lambda deliberately: the dialog belongs to the screen, not to
+    // the scrolling list, and it must survive the list recomposing under it.
+    state.bookingFor?.let { lead ->
+        BookingDetailsDialog(
+            lead = lead,
+            products = state.products,
+            isSubmitting = state.isBooking,
+            onSubmit = { viewModel.submitBooking(it) },
+            onDismiss = { viewModel.cancelBooking() },
+        )
+    }
 }
 
 private val ProspectColor = Color(0xFFE05260)
 private val PreProspectColor = Color(0xFFE0A020)
 private val InterestedColor = Color(0xFF1E9E7E)
 
+/**
+ * Extra accents for statuses the app has never seen. Picked per status name so a backend-added
+ * status gets a stable colour instead of the default blue every time.
+ */
+private val ExtraFilterAccents = listOf(
+    Color(0xFF7C3AED),
+    Color(0xFF0891B2),
+    Color(0xFFD97706),
+    Color(0xFF16A34A),
+    Color(0xFFDC2626),
+    Color(0xFF2563EB),
+)
+
+/**
+ * Chip accent for a filter. The original six statuses keep the exact colours they had when this list
+ * was hardcoded; anything new is assigned deterministically from [ExtraFilterAccents] by name hash,
+ * so the colour is stable across launches and devices rather than shifting per session.
+ */
+private fun filterAccent(filter: LeadFilter): Color {
+    val status = filter.statusMatch ?: return CrmPrimary
+    return when (status.trim().lowercase()) {
+        "fresh leads" -> CrmPrimary
+        "interested leads" -> InterestedColor
+        "pre prospect leads" -> PreProspectColor
+        "prospect leads" -> ProspectColor
+        "booked" -> CrmPrimary
+        "rejected leads" -> CrmPrimary
+        else -> ExtraFilterAccents[status.lowercase().hashCode().mod(ExtraFilterAccents.size)]
+    }
+}
+
+/**
+ * Status filter chips, built from the server's status list rather than a fixed set — a status added
+ * on the backend shows up here without an app release.
+ *
+ * Split across two scrollable rows: with the default six statuses this reproduces the original 4/3
+ * layout exactly, and a longer list stays reachable because each row scrolls horizontally.
+ */
 @Composable
 private fun FilterChips(
     state: LeadsUiState,
     onFilterClick: (LeadFilter) -> Unit,
 ) {
+    val chips = state.filters
+    // Ceiling division, so any odd chip lands on the first row: with the default six statuses that
+    // reproduces the previous 4/3 split. coerceAtLeast guards chunked(), which rejects a size of 0.
+    val rows = chips.chunked(((chips.size + 1) / 2).coerceAtLeast(1))
+
     Column(Modifier.padding(top = 8.dp, bottom = 4.dp)) {
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(LeadFilter.ALL, state, CrmPrimary, onFilterClick)
-            FilterChip(LeadFilter.FRESH, state, CrmPrimary, onFilterClick)
-            FilterChip(LeadFilter.INTERESTED, state, InterestedColor, onFilterClick)
-            FilterChip(LeadFilter.PRE_PROSPECT, state, PreProspectColor, onFilterClick)
-        }
-        Spacer(Modifier.height(8.dp))
-
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
-                .padding(horizontal = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(LeadFilter.PROSPECT, state, ProspectColor, onFilterClick)
-            FilterChip(LeadFilter.BOOKED, state, CrmPrimary, onFilterClick)
-            FilterChip(LeadFilter.REJECTED, state, CrmPrimary, onFilterClick)
+        rows.forEachIndexed { index, rowChips ->
+            if (index > 0) Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                rowChips.forEach { filter ->
+                    FilterChip(filter, state, filterAccent(filter), onFilterClick)
+                }
+            }
         }
     }
 }
@@ -264,7 +325,7 @@ private fun FilterChip(
 ) {
 
     val selected = state.activeFilter == filter ||
-        (filter == LeadFilter.ALL && state.activeFilter == null)
+        (filter == LeadFilter.All && state.activeFilter == null)
     Surface(
         color = if (selected) accent else MaterialTheme.colorScheme.surface,
         shape = RoundedCornerShape(20.dp),

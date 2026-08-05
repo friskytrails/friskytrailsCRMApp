@@ -23,6 +23,19 @@ interface LeadDao {
     @Query("UPDATE leads SET status = :status, statusChangedAt = :changedAt WHERE id = :leadId")
     suspend fun updateStatus(leadId: String, status: String, changedAt: Long)
 
+    // Targeted rather than an upsert of the whole row: a concurrent syncLeads writing the same lead
+    // shouldn't have its other columns clobbered by a stale copy read before the edit.
+    @Query(
+        "UPDATE leads SET name = :name, travelDate = :travelDate, " +
+            "numberOfPersons = :numberOfPersons WHERE id = :leadId"
+    )
+    suspend fun updateLeadInfo(
+        leadId: String,
+        name: String,
+        travelDate: String?,
+        numberOfPersons: Int?,
+    )
+
     @Query("DELETE FROM leads WHERE id NOT IN (:keepIds)")
     suspend fun deleteLeadsNotIn(keepIds: List<String>)
 
@@ -65,4 +78,33 @@ interface StatusHistoryDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(entry: StatusHistoryEntity)
+}
+
+@Dao
+interface BugReportDao {
+
+    @Query("SELECT * FROM bug_reports ORDER BY createdAt DESC")
+    fun observeAll(): Flow<List<BugReportEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insert(report: BugReportEntity)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(reports: List<BugReportEntity>)
+
+    @Query("DELETE FROM bug_reports WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("DELETE FROM bug_reports WHERE id NOT LIKE '%-%'")
+    suspend fun deleteServerReports()
+
+    /**
+     * Swaps in a fresh server list while leaving unsent local reports (UUID ids) alone, so a sync
+     * can't silently drop a report the agent filed offline. Mirrors `NoteDao.replaceServerNotes`.
+     */
+    @Transaction
+    suspend fun replaceServerReports(serverReports: List<BugReportEntity>) {
+        deleteServerReports()
+        if (serverReports.isNotEmpty()) insertAll(serverReports)
+    }
 }

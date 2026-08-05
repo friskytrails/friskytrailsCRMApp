@@ -22,6 +22,13 @@ data class LeadEntity(
 
     val source: String? = null,
 
+    // Agent-editable lead fields (PUT api/leads/{id}). Free-form string, because the backend schema
+    // stores it that way — usually `yyyy-MM-dd`, but the web dashboard can write a formatted date.
+    val travelDate: String? = null,
+
+    // Party size. Null means "not set", matching the backend default — distinct from 0.
+    val numberOfPersons: Int? = null,
+
     val statusChangedAt: Long? = null,
     val createdAt: Long = System.currentTimeMillis(),
     val dueDate: Long? = null,
@@ -76,4 +83,31 @@ data class StatusHistoryEntity(
     val newStatus: String,
     val changedBy: String,
     val changedAt: Long = System.currentTimeMillis(),
+)
+
+/**
+ * An agent-filed bug report. Deliberately not tied to a lead, so no foreign key.
+ *
+ * Reports are visible to every logged-in agent via `GET api/bugs`. [isSynced] false means this row
+ * exists only on this device because the push failed — the UI says so rather than implying the team
+ * has seen it.
+ *
+ * Id convention matches notes: a local report gets a UUID (contains '-'), a server one won't, which
+ * is what lets [BugReportDao.replaceServerReports] refresh server rows without touching unsent ones.
+ */
+@Entity(tableName = "bug_reports")
+data class BugReportEntity(
+    @PrimaryKey val id: String,
+    val title: String,
+    val description: String,
+    val reporterName: String,
+    val reporterId: String? = null,
+    val createdAt: Long = System.currentTimeMillis(),
+    val isSynced: Boolean = false,
+    /**
+     * Server-owned triage state. Stored as free text, not an enum, so a status added on the backend
+     * shows up instead of failing to parse. Literal default mirrors `BugStatus.OPEN` — spelled out
+     * to keep this Room layer free of remote-package imports.
+     */
+    val status: String = "Open",
 )

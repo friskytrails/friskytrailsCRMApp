@@ -1,33 +1,29 @@
 package com.crmapplication.ui.screens
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -37,55 +33,24 @@ import com.crmapplication.ui.theme.CrmPrimary
 import com.crmapplication.ui.theme.CrmSecondary
 import com.crmapplication.viewModel.ProfileViewModel
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProfileScreen(
     agentName: String,
     agentEmail: String,
     onLogout: () -> Unit,
     onBack: () -> Unit,
-    onProfileUpdated: () -> Unit = {},
+    onOpenBugReports: () -> Unit = {},
     viewModel: ProfileViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsState()
-    val focusManager = LocalFocusManager.current
-    val snackbarHostState = remember { SnackbarHostState() }
 
     val displayName = state.name.ifBlank { agentName }.ifBlank { "Agent" }
     val displayEmail = state.email.ifBlank { agentEmail }
 
-    var name by remember { mutableStateOf(displayName) }
-    var email by remember { mutableStateOf(displayEmail) }
-    LaunchedEffect(state.name, state.email) {
-        if (state.name.isNotBlank()) name = state.name
-        if (state.email.isNotBlank()) email = state.email
-    }
-
-    var localError by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(state.profileUpdated) {
-        if (state.profileUpdated) {
-            viewModel.clearProfileUpdated()
-            onProfileUpdated()
-            snackbarHostState.showSnackbar("Profile updated")
-        }
-    }
-
-    fun saveProfile() {
-        focusManager.clearFocus()
-        localError = when {
-            name.isBlank()               -> "Please enter your name"
-            !email.trim().isValidEmail() -> "Please enter a valid email"
-            else                         -> null
-        }
-        if (localError == null) {
-            viewModel.clearError()
-            viewModel.updateProfile(name, email)
-        }
-    }
+    // Null means "follow the system", so resolve it for the icon and the toggle target.
+    val darkEnabled = state.darkMode ?: isSystemInDarkTheme()
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             Column {
                 Box(
@@ -101,14 +66,32 @@ fun ProfileScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         IconButton(onClick = onBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = Color.White)
+                            Icon(
+                                Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "Back",
+                                tint = Color.White,
+                            )
                         }
                         Text(
                             "Profile",
                             color = Color.White,
                             fontWeight = FontWeight.Bold,
                             fontSize = 18.sp,
+                            modifier = Modifier.weight(1f),
                         )
+                        IconButton(onClick = { viewModel.setDarkMode(!darkEnabled) }) {
+                            Icon(
+                                if (darkEnabled) Icons.Default.LightMode else Icons.Default.DarkMode,
+                                // Describes what the tap does, not the current state — that's what a
+                                // screen reader user needs from a control.
+                                contentDescription = if (darkEnabled) {
+                                    "Switch to light mode"
+                                } else {
+                                    "Switch to dark mode"
+                                },
+                                tint = Color.White,
+                            )
+                        }
                     }
                 }
                 if (state.isLoading) {
@@ -179,64 +162,51 @@ fun ProfileScreen(
 
             Spacer(Modifier.height(24.dp))
 
+            // Read-only: an agent's name and email are set at registration and owned by the backend,
+            // so there's nothing to edit here.
             SectionCard(title = "Account details") {
-                AuthTextField(
-                    value = name,
-                    onValueChange = { name = it; localError = null },
-                    label = "Full Name",
-                    keyboardType = KeyboardType.Text,
-                )
+                ReadOnlyRow(label = "Full Name", value = displayName)
                 Spacer(Modifier.height(12.dp))
-                AuthTextField(
-                    value = email,
-                    onValueChange = { email = it; localError = null },
-                    label = "Email",
-                    keyboardType = KeyboardType.Email,
-                    imeAction = ImeAction.Done,
-                    keyboardActions = KeyboardActions(onDone = { saveProfile() }),
-                )
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = { saveProfile() },
-                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                    enabled = !state.isSaving,
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = CrmPrimary),
-                ) {
-                    if (state.isSaving) {
-                        CircularProgressIndicator(Modifier.size(20.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Text("Save changes", fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
-                    }
-                }
+                ReadOnlyRow(label = "Email", value = displayEmail.ifBlank { "—" })
             }
 
-            AuthError(localError ?: state.error)
+            AuthError(state.error)
 
             Spacer(Modifier.height(16.dp))
 
-            val darkEnabled = state.darkMode ?: isSystemInDarkTheme()
-            SectionCard(title = "Appearance") {
+            Card(
+                Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenBugReports() },
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
                 Row(
-                    Modifier.fillMaxWidth(),
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    Text("🐞", fontSize = 20.sp)
+                    Spacer(Modifier.width(12.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "Dark mode",
+                            "Bug Reports",
                             color = MaterialTheme.colorScheme.onSurface,
-                            fontWeight = FontWeight.SemiBold,
-                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 16.sp,
                         )
                         Text(
-                            if (darkEnabled) "On" else "Off",
+                            "Report a problem or see what others reported",
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             fontSize = 13.sp,
                         )
                     }
-                    Switch(
-                        checked = darkEnabled,
-                        onCheckedChange = { viewModel.setDarkMode(it) },
+                    Icon(
+                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }
@@ -258,6 +228,27 @@ fun ProfileScreen(
             }
             Spacer(Modifier.height(8.dp))
         }
+    }
+}
+
+@Composable
+private fun ReadOnlyRow(label: String, value: String) {
+    Column(Modifier.fillMaxWidth()) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium,
+        )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            value,
+            color = MaterialTheme.colorScheme.onSurface,
+            fontSize = 15.sp,
+            fontWeight = FontWeight.SemiBold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

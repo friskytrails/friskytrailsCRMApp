@@ -76,7 +76,7 @@ data class LiveActivityDto(
  */
 data class LongCallDto(
     @SerializedName("_id") val id: String? = null,
-    val agentId: String? = null,
+    val agentId: String? = null, 
     val name: String? = null,
     val leadId: String? = null,
     val contactNumber: String? = null,

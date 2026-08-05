@@ -18,6 +18,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -27,6 +28,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.unit.dp
@@ -36,21 +38,35 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.crmapplication.LeadDetailVM.repository.Lead
 import com.crmapplication.LeadDetailVM.repository.StatusChange
+import com.crmapplication.LeadDetailVM.repository.isBooked
 import com.crmapplication.calllog.CallLogEntry
 import com.crmapplication.calllog.CallType
 import com.crmapplication.calllog.callStats
+import com.crmapplication.ui.component.AttachmentActionSheet
+import com.crmapplication.ui.component.ImagePreviewDialog
 import com.crmapplication.ui.component.NoteItem
 import com.crmapplication.ui.component.StatusDropdown
+import com.crmapplication.utils.downloadAttachment
+import com.crmapplication.utils.downloadNeedsStoragePermission
 import com.crmapplication.utils.formatBookingDateTime
 import com.crmapplication.utils.formatCallTime
 import com.crmapplication.utils.formatDuration
 import com.crmapplication.utils.formatTimestamp
+import com.crmapplication.utils.formatTravelDate
 import com.crmapplication.utils.formatWhatsAppUrl
+import com.crmapplication.utils.isPreviewableImage
+import com.crmapplication.utils.openAttachmentExternally
 import com.crmapplication.viewModel.LeadDetailViewModel
 import com.crmapplication.viewModel.LeadsViewModel
+import com.salescrm.R
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 import java.text.SimpleDateFormat
 import java.util.*
+
+/** How often to re-pull this lead while the screen is in front of the agent. */
+private const val DETAIL_POLL_INTERVAL_MS = 25_000L
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -71,12 +87,37 @@ fun LeadDetailScreen(
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
+    var isResumed by remember { mutableStateOf(false) }
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) detailVm.refresh()
+            when (event) {
+                Lifecycle.Event.ON_RESUME -> {
+                    isResumed = true
+                    detailVm.refresh()
+                    // Statuses are server-owned, and this screen's status dropdown is one of the
+                    // things they drive — so refresh config here too, not just the lead.
+                    leadsVm.refreshConfig()
+                }
+                Lifecycle.Event.ON_PAUSE -> isResumed = false
+                else -> Unit
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    // There's no push channel, so a note or status change made on the web dashboard would otherwise
+    // stay invisible for as long as the agent sits on this screen. Poll while resumed; ON_RESUME
+    // already covers the return-to-screen case, so wait out the first interval before asking.
+    LaunchedEffect(isResumed) {
+        if (!isResumed) return@LaunchedEffect
+        while (true) {
+            delay(DETAIL_POLL_INTERVAL_MS)
+            detailVm.refresh(showLoading = false)
+            // Same reason as ON_RESUME: a status added on the backend should reach this screen's
+            // dropdown while the agent is sitting on it. Throttled in the repository.
+            leadsVm.refreshConfig()
+        }
     }
 
     var noteText by remember { mutableStateOf("") }
@@ -86,6 +127,15 @@ fun LeadDetailScreen(
     var pendingDateMillis by remember { mutableStateOf<Long?>(null) }
 
     var showWhatsAppSheet by remember { mutableStateOf(false) }
+
+    /** Which lead field's edit dialog is open, or null when none is. */
+    var editingField by remember { mutableStateOf<LeadEditField?>(null) }
+
+    // Attachment flow: tapping an attachment opens the action sheet; Preview on an image opens the
+    // in-app viewer, Preview on a document hands off to another app, Download always saves.
+    var attachmentSheetUrl by remember { mutableStateOf<String?>(null) }
+    var previewImageUrl by remember { mutableStateOf<String?>(null) }
+    var pendingDownloadUrl by remember { mutableStateOf<String?>(null) }
 
     val callLogPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -140,6 +190,77 @@ fun LeadDetailScreen(
             snackbarHostState.showSnackbar(msg)
             detailVm.clearError()
         }
+    }
+    // Booking lives on LeadsViewModel (it owns updateStatus and the product catalog), so its signals
+    // need their own collectors here — detailState's error channel never sees them.
+    LaunchedEffect(leadsState.error) {
+        leadsState.error?.let { msg ->
+            snackbarHostState.showSnackbar(msg)
+            leadsVm.clearError()
+        }
+    }
+    LaunchedEffect(leadsState.bookingSuccess) {
+        if (leadsState.bookingSuccess) {
+            snackbarHostState.showSnackbar("Lead booked. Status is now locked.")
+            leadsVm.clearBookingSuccess()
+        }
+    }
+    val leadInfoSavedMessage = stringResource(R.string.lead_field_saved)
+    LaunchedEffect(leadsState.leadInfoSaved) {
+        if (leadsState.leadInfoSaved) {
+            snackbarHostState.showSnackbar(leadInfoSavedMessage)
+            leadsVm.clearLeadInfoSaved()
+        }
+    }
+
+    // Resolved up front: these are read inside callbacks, where stringResource isn't available.
+    val scope = rememberCoroutineScope()
+    val downloadStartedTemplate = stringResource(R.string.attachment_download_started)
+    val downloadFailedMessage = stringResource(R.string.attachment_download_failed)
+    val noAppMessage = stringResource(R.string.attachment_no_app)
+    val storagePermissionMessage = stringResource(R.string.attachment_storage_permission_needed)
+
+    fun notify(message: String) {
+        scope.launch { snackbarHostState.showSnackbar(message) }
+    }
+
+    fun performDownload(url: String) {
+        val fileName = context.downloadAttachment(url)
+        notify(
+            if (fileName != null) downloadStartedTemplate.format(fileName)
+            else downloadFailedMessage
+        )
+    }
+
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val url = pendingDownloadUrl
+        pendingDownloadUrl = null
+        when {
+            !granted -> notify(storagePermissionMessage)
+            url != null -> performDownload(url)
+        }
+    }
+
+    /**
+     * Writing to public Downloads needs WRITE_EXTERNAL_STORAGE up to API 28; from 29 scoped storage
+     * exempts DownloadManager, so nothing is requested on modern devices.
+     */
+    fun requestDownload(url: String) {
+        val needsPermission = downloadNeedsStoragePermission() &&
+            context.checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
+            PackageManager.PERMISSION_GRANTED
+        if (needsPermission) {
+            pendingDownloadUrl = url
+            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+        } else {
+            performDownload(url)
+        }
+    }
+
+    fun openExternally(url: String) {
+        if (!context.openAttachmentExternally(url)) notify(noAppMessage)
     }
 
     Scaffold(
@@ -210,7 +331,11 @@ fun LeadDetailScreen(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("Lead Information", style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
                         HorizontalDivider()
-                        InfoRow("Name", lead.name)
+                        EditableInfoRow(
+                            label = stringResource(R.string.lead_field_name),
+                            value = lead.name,
+                            onEdit = { editingField = LeadEditField.NAME },
+                        )
 
                         lead.product?.let { product ->
                             InfoRow("Product", product)
@@ -230,9 +355,33 @@ fun LeadDetailScreen(
                             )
                             StatusDropdown(
                                 status = lead.status,
+                                statuses = leadsState.statusOptions,
                                 onStatusChange = { leadsVm.updateStatus(lead.id, it) },
+                                enabled = !lead.isBooked(),
                             )
                         }
+
+                        if (lead.isBooked()) {
+                            Text(
+                                "This lead is booked — the status is final and can't be changed.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        EditableInfoRow(
+                            label = stringResource(R.string.lead_field_travel_date),
+                            value = formatTravelDate(lead.travelDate)
+                                ?: stringResource(R.string.lead_field_not_set),
+                            onEdit = { editingField = LeadEditField.TRAVEL_DATE },
+                        )
+
+                        EditableInfoRow(
+                            label = stringResource(R.string.lead_field_persons),
+                            value = lead.numberOfPersons?.toString()
+                                ?: stringResource(R.string.lead_field_not_set),
+                            onEdit = { editingField = LeadEditField.PERSONS },
+                        )
 
                         if (detailState.hasCallLogMatch) {
 
@@ -393,13 +542,75 @@ fun LeadDetailScreen(
                     NoteItem(
                         note = note,
                         myAgentId = detailState.myAgentId,
-                        onOpenAttachment = { url ->
-                            context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        },
+                        onAttachmentClick = { url -> attachmentSheetUrl = url },
                     )
                 }
             }
         }
+    }
+
+    leadsState.bookingFor?.let { bookingLead ->
+        BookingDetailsDialog(
+            lead = bookingLead,
+            products = leadsState.products,
+            isSubmitting = leadsState.isBooking,
+            onSubmit = { leadsVm.submitBooking(it) },
+            onDismiss = { leadsVm.cancelBooking() },
+        )
+    }
+
+    // Each save sends only the field that changed, so a concurrent edit to another field (from the
+    // web dashboard, say) survives. The dialog closes immediately: the local write has already
+    // landed by the time the push resolves, and a failure surfaces on the error snackbar.
+    editingField?.let { field ->
+        lead?.let { editedLead ->
+            LeadFieldEditDialog(
+                field = field,
+                currentName = editedLead.name,
+                currentTravelDate = editedLead.travelDate,
+                currentPersons = editedLead.numberOfPersons,
+                onSaveName = { newName ->
+                    editingField = null
+                    leadsVm.updateLeadInfo(editedLead.id, name = newName)
+                },
+                onSaveTravelDate = { apiDate ->
+                    editingField = null
+                    leadsVm.updateLeadInfo(editedLead.id, travelDate = apiDate)
+                },
+                onSavePersons = { persons ->
+                    editingField = null
+                    leadsVm.updateLeadInfo(editedLead.id, numberOfPersons = persons)
+                },
+                onDismiss = { editingField = null },
+            )
+        }
+    }
+
+    attachmentSheetUrl?.let { url ->
+        AttachmentActionSheet(
+            url = url,
+            onPreview = {
+                attachmentSheetUrl = null
+                // Images stay in-app; anything else has to go to an app that can render it.
+                if (isPreviewableImage(url)) previewImageUrl = url else openExternally(url)
+            },
+            onDownload = {
+                attachmentSheetUrl = null
+                requestDownload(url)
+            },
+            onDismiss = { attachmentSheetUrl = null },
+        )
+    }
+
+    previewImageUrl?.let { url ->
+        ImagePreviewDialog(
+            url = url,
+            onOpenExternally = {
+                previewImageUrl = null
+                openExternally(url)
+            },
+            onDismiss = { previewImageUrl = null },
+        )
     }
 
     if (showDatePicker) {
@@ -775,6 +986,40 @@ private fun InfoRow(label: String, value: String) {
     Row(Modifier.fillMaxWidth()) {
         Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(100.dp), style = MaterialTheme.typography.bodyMedium)
         Text(value, fontWeight = FontWeight.Medium, style = MaterialTheme.typography.bodyMedium)
+    }
+}
+
+/**
+ * An [InfoRow] with a trailing pencil that opens the field's edit dialog.
+ *
+ * The icon carries the whole affordance — the value text itself isn't tappable, so a long lead name
+ * can still be selected and read without a stray tap opening a dialog.
+ */
+@Composable
+private fun EditableInfoRow(label: String, value: String, onEdit: () -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.width(100.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        Text(
+            value,
+            fontWeight = FontWeight.Medium,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.weight(1f),
+        )
+        // Default IconButton size (48dp) rather than a tighter one: the glyph is small to keep the
+        // row dense, but the touch target has to stay at Android's 48dp accessibility minimum.
+        IconButton(onClick = onEdit) {
+            Icon(
+                Icons.Filled.Edit,
+                contentDescription = stringResource(R.string.lead_field_edit, label),
+                modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.primary,
+            )
+        }
     }
 }
 

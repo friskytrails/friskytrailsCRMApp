@@ -172,7 +172,7 @@ fun AddLeadScreen(
                     leadingIcon = Icons.Filled.Sell,
                     // Catalog is server-owned: re-fetch as the menu opens so a product added on the
                     // backend shows up without reopening the screen. Throttled in the repository.
-                    onExpand = { viewModel.refreshProducts() },
+                    onExpand = { viewModel.refreshConfig() },
                 )
                 LabeledField(
                     label = "Destination of Interest",

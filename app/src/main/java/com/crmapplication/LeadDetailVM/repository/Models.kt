@@ -1,10 +1,13 @@
 package com.crmapplication.LeadDetailVM.repository
 
+import com.crmapplication.LeadDetailVM.local.BugReportEntity
 import com.crmapplication.LeadDetailVM.local.LeadEntity
 import com.crmapplication.LeadDetailVM.local.NoteEntity
 import com.crmapplication.LeadDetailVM.local.StatusHistoryEntity
 import com.crmapplication.LeadDetailVM.remote.ApiLeadDto
 import com.crmapplication.LeadDetailVM.remote.ApiNoteDto
+import com.crmapplication.LeadDetailVM.remote.BugReportDto
+import com.crmapplication.LeadDetailVM.remote.BugStatus
 import com.crmapplication.LeadDetailVM.remote.AuthUser
 import com.crmapplication.LeadDetailVM.remote.LeadDto
 import com.crmapplication.LeadDetailVM.remote.MeResponse
@@ -27,6 +30,16 @@ data class Lead(
 
     val source: String? = null,
 
+    /**
+     * When the party travels, as the server stores it — a free-form string, usually `yyyy-MM-dd`.
+     * Kept verbatim rather than parsed to millis: the web dashboard may write an already-formatted
+     * date, and re-formatting a string we can't parse would lose what the agent typed.
+     */
+    val travelDate: String? = null,
+
+    /** Party size. Null means "not set" (the backend default), which is distinct from 0. */
+    val numberOfPersons: Int? = null,
+
     val statusChangedAt: Long? = null,
     val createdAt: Long,
     val dueDate: Long?,
@@ -34,16 +47,23 @@ data class Lead(
     val notes: List<Note> = emptyList(),
 )
 
-val LEAD_STATUSES = listOf(
-    "Fresh Leads",
-    "Interested Leads",
-    "Pre Prospect Leads",
-    "Prospect Leads",
-    "Booked",
-    "Rejected Leads",
-)
-
+/**
+ * Status a lead falls back to when the server sends none. Stays a compile-time constant rather than
+ * following `GET /api/config`: it's used in the DTO → domain mapping, which has no config access.
+ *
+ * The live status list lives in `LeadsUiState.statuses` (see [DEFAULT_LEAD_STATUSES] for the
+ * pre-sync fallback).
+ */
 const val DEFAULT_LEAD_STATUS = "Fresh Leads"
+
+/**
+ * The one status that isn't reachable from the plain status dropdown: it requires the booking form
+ * (`PUT api/leads/{id}/book`), and once a lead is here this app won't let the status change again.
+ */
+const val BOOKED_STATUS = "Booked"
+
+/** True when the lead is booked, so its status is locked and the booking form is closed. */
+fun Lead.isBooked(): Boolean = status.equals(BOOKED_STATUS, ignoreCase = true)
 
 data class Note(
     val id: String,
@@ -87,6 +107,24 @@ data class StatusChange(
     val newStatus: String,
     val changedBy: String,
     val changedAt: Long,
+)
+
+/**
+ * A bug report filed by an agent. [isSynced] is false while the report exists only on this device —
+ * the UI surfaces that so an agent isn't left thinking a report reached the team when it hasn't.
+ *
+ * [status] is whatever the backend currently says (see `BugStatus`), so an agent can tell a fixed
+ * report from one nobody has picked up.
+ */
+data class BugReport(
+    val id: String,
+    val title: String,
+    val description: String,
+    val reporterName: String,
+    val reporterId: String? = null,
+    val createdAt: Long,
+    val isSynced: Boolean = false,
+    val status: String = BugStatus.OPEN,
 )
 
 data class DashboardStats(
@@ -136,6 +174,8 @@ fun LeadEntity.toDomain() = Lead(
     status = status,
     product = product,
     source = source,
+    travelDate = travelDate,
+    numberOfPersons = numberOfPersons,
     statusChangedAt = statusChangedAt,
     createdAt = createdAt,
     dueDate = dueDate,
@@ -157,14 +197,26 @@ fun ApiLeadDto.toEntity(): LeadEntity {
         status = status?.takeIf { it.isNotBlank() } ?: DEFAULT_LEAD_STATUS,
         product = product?.trim()?.takeIf { it.isNotBlank() },
         source = leadSource?.trim()?.takeIf { it.isNotBlank() },
+        // The backend defaults travelDate to "", so blank and absent both mean "not set" here.
+        travelDate = travelDate?.trim()?.takeIf { it.isNotBlank() },
+        numberOfPersons = numberOfPersons?.takeIf { it > 0 },
         createdAt = createdAt.toEpochMillisOrNow(),
-        dueDate = null,
+        // `dates.reminderDate` is the server's copy of the reminder (date + time, set via
+        // PUT /api/leads/:id/reminder). Deliberately NOT `dates.dueDate`: that one is date-only and
+        // the call-log sync rewrites it on every refresh, so it would stomp the agent's reminder.
+        // Null here means "no reminder on the server" — LeadsRepository.syncLeads decides whether
+        // that outranks the locally stored value.
+        dueDate = dates?.reminderDate.toEpochMillisOrNull(),
     )
 }
 
 private fun String?.toEpochMillisOrNow(): Long =
-    this?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
-        ?: System.currentTimeMillis()
+    toEpochMillisOrNull() ?: System.currentTimeMillis()
+
+/** Parses an ISO-8601 instant, or null if absent/unparseable. */
+private fun String?.toEpochMillisOrNull(): Long? =
+    this?.takeIf { it.isNotBlank() }
+        ?.let { runCatching { Instant.parse(it).toEpochMilli() }.getOrNull() }
 
 fun NoteDto.toEntity() = NoteEntity(id, leadId, text, timestamp)
 
@@ -198,6 +250,43 @@ fun ApiNoteDto.toEntity(leadId: String): NoteEntity {
 private fun objectIdToEpochMillis(id: String): Long? {
     if (id.length < 8) return null
     return runCatching { id.substring(0, 8).toLong(16) * 1000L }.getOrNull()
+}
+
+fun BugReportEntity.toDomain() = BugReport(
+    id = id,
+    title = title,
+    description = description,
+    reporterName = reporterName,
+    reporterId = reporterId,
+    createdAt = createdAt,
+    isSynced = isSynced,
+    status = status,
+)
+
+/**
+ * Server report → local row.
+ *
+ * The fallback id for a response missing both `id` and `_id` deliberately has **no hyphen**. The
+ * hyphen is load-bearing: `BugReportDao.deleteServerReports` keys off `id NOT LIKE '%-%'` to tell
+ * server rows from unsent local ones (which get UUIDs). A `srv-…` id would contain a hyphen, so it
+ * would be misread as local, survive every `replaceServerReports`, and pile up a duplicate per sync.
+ */
+fun BugReportDto.toEntity(): BugReportEntity {
+    val reportId = id ?: mongoId ?: "srv${System.nanoTime()}"
+    return BugReportEntity(
+        id = reportId,
+        title = title?.trim().orEmpty().ifBlank { "(no title)" },
+        description = description?.trim().orEmpty(),
+        reporterName = reporterName?.trim()?.takeIf { it.isNotBlank() } ?: "Unknown agent",
+        // `reportedBy` on the wire — not `reporterId`, and not the `authorId` that notes use.
+        reporterId = reportedBy?.trim()?.takeIf { it.isNotBlank() },
+        createdAt = createdAt.toEpochMillisOrNow(),
+        // Came from the server, so by definition every agent can see it.
+        isSynced = true,
+        // A response without a status is treated as untriaged rather than blank, so the badge can't
+        // render empty.
+        status = status?.trim()?.takeIf { it.isNotBlank() } ?: BugStatus.OPEN,
+    )
 }
 
 fun MeResponse.toDomain() = Profile(

@@ -2,6 +2,7 @@ package com.crmapplication.di
 
 import android.content.Context
 import androidx.room.Room
+import com.crmapplication.LeadDetailVM.local.BugReportDao
 import com.crmapplication.LeadDetailVM.local.CrmDatabase
 import com.crmapplication.LeadDetailVM.local.LeadDao
 import com.crmapplication.LeadDetailVM.local.NoteDao
@@ -31,5 +32,6 @@ object AppModule {
     @Provides fun provideLeadDao(db: CrmDatabase): LeadDao = db.leadDao()
     @Provides fun provideNoteDao(db: CrmDatabase): NoteDao = db.noteDao()
     @Provides fun provideStatusHistoryDao(db: CrmDatabase): StatusHistoryDao = db.statusHistoryDao()
+    @Provides fun provideBugReportDao(db: CrmDatabase): BugReportDao = db.bugReportDao()
 }
 // nothing

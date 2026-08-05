@@ -21,10 +21,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextDecoration
-import coil.compose.AsyncImage
-import com.crmapplication.LeadDetailVM.repository.LEAD_STATUSES
+import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.Image
+import coil.compose.AsyncImagePainter
+import coil.compose.rememberAsyncImagePainter
+import com.salescrm.R
 import com.crmapplication.LeadDetailVM.repository.Lead
 import com.crmapplication.LeadDetailVM.repository.Note
+import com.crmapplication.LeadDetailVM.repository.isBooked
+import com.crmapplication.utils.attachmentDisplayLabel
 import com.crmapplication.utils.formatDate
 import com.crmapplication.utils.formatTimestamp
 import com.crmapplication.utils.getDueDateStatus
@@ -73,6 +78,7 @@ private fun statusColors(status: String): Pair<Color, Color> = when (status) {
 @Composable
 fun LeadCard(
     lead: Lead,
+    statuses: List<String>,
     onClick: () -> Unit,
     onStatusChange: (String) -> Unit = {},
 ) {
@@ -141,7 +147,14 @@ fun LeadCard(
             }
 
             Column(horizontalAlignment = Alignment.End) {
-                StatusDropdown(status = lead.status, onStatusChange = onStatusChange)
+                // Derived here rather than passed in, so every caller of LeadCard gets the lock
+                // without having to remember to ask for it.
+                StatusDropdown(
+                    status = lead.status,
+                    statuses = statuses,
+                    onStatusChange = onStatusChange,
+                    enabled = !lead.isBooked(),
+                )
 
                 if (dueDateStatus != null) {
                     Spacer(Modifier.height(6.dp))
@@ -163,8 +176,20 @@ fun LeadCard(
     }
 }
 
+/**
+ * Status chip that opens the status list on tap.
+ *
+ * [enabled] false renders the chip as plain, un-tappable text — used for booked leads, whose status is
+ * final in this app. The chip still shows (the agent needs to see the status); it just can't be
+ * changed, and the ▾ affordance is dropped so it doesn't look tappable.
+ */
 @Composable
-fun StatusDropdown(status: String, onStatusChange: (String) -> Unit) {
+fun StatusDropdown(
+    status: String,
+    statuses: List<String>,
+    onStatusChange: (String) -> Unit,
+    enabled: Boolean = true,
+) {
     var expanded by remember { mutableStateOf(false) }
     val (chipBg, chipText) = statusColors(status)
 
@@ -172,7 +197,7 @@ fun StatusDropdown(status: String, onStatusChange: (String) -> Unit) {
         Surface(
             color = chipBg,
             shape = RoundedCornerShape(8.dp),
-            modifier = Modifier.clickable { expanded = true },
+            modifier = if (enabled) Modifier.clickable { expanded = true } else Modifier,
         ) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
@@ -184,14 +209,18 @@ fun StatusDropdown(status: String, onStatusChange: (String) -> Unit) {
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
                 )
-                Text(" ▾", color = chipText, fontSize = 12.sp)
+                if (enabled) {
+                    Text(" ▾", color = chipText, fontSize = 12.sp)
+                } else {
+                    Text(" 🔒", fontSize = 10.sp)
+                }
             }
         }
         DropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
         ) {
-            LEAD_STATUSES.forEach { option ->
+            statuses.forEach { option ->
                 DropdownMenuItem(
                     text = { Text(option) },
                     onClick = {
@@ -208,7 +237,8 @@ fun StatusDropdown(status: String, onStatusChange: (String) -> Unit) {
 fun NoteItem(
     note: Note,
     myAgentId: String? = null,
-    onOpenAttachment: (String) -> Unit = {},
+    /** Opens the Preview/Download sheet for the note's attachment. */
+    onAttachmentClick: (String) -> Unit = {},
 ) {
 
     val isMine = note.authorId != null && note.authorId == myAgentId ||
@@ -252,41 +282,90 @@ fun NoteItem(
 
             note.imageUrl?.takeIf { it.isNotBlank() }?.let { url ->
                 Spacer(Modifier.height(8.dp))
-                if (note.isDocument) {
-                    Surface(
-                        color = MaterialTheme.colorScheme.surfaceVariant,
-                        shape = RoundedCornerShape(8.dp),
-                        modifier = Modifier.fillMaxWidth().clickable { onOpenAttachment(url) },
-                    ) {
-                        Row(
-                            Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text("📄", fontSize = 18.sp)
-                            Spacer(Modifier.width(8.dp))
-                            Text(
-                                note.text.ifBlank { "Open document" },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
-                                textDecoration = TextDecoration.Underline,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                } else {
-                    AsyncImage(
-                        model = url,
-                        contentDescription = "Attachment preview",
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(160.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .clickable { onOpenAttachment(url) },
-                    )
-                }
+                NoteAttachment(
+                    url = url,
+                    label = attachmentDisplayLabel(url, note.text),
+                    isDocument = note.isDocument,
+                    onClick = { onAttachmentClick(url) },
+                )
             }
+        }
+    }
+}
+
+/**
+ * A note's attachment: an image thumbnail, or a document card when the URL isn't an image.
+ *
+ * Images route through [SubcomposeAsyncImage] specifically for its error slot. [Note.isDocument]
+ * can only detect a document by extension or `/raw/upload/`, so a Cloudinary URL whose public id
+ * carries no extension reaches here marked as an image and used to render as an empty 160dp box.
+ * Falling back to the document card on decode failure means the agent still gets something
+ * tappable instead of blank space.
+ */
+@Composable
+private fun NoteAttachment(
+    url: String,
+    label: String,
+    isDocument: Boolean,
+    onClick: () -> Unit,
+) {
+    if (isDocument) {
+        DocumentCard(label = label, onClick = onClick)
+        return
+    }
+
+    // The load state drives the layout rather than a subcomposed error slot, so a failed image
+    // collapses to the document card's own height instead of leaving dead space inside a 160dp box.
+    val painter = rememberAsyncImagePainter(model = url)
+    val state = painter.state
+
+    if (state is AsyncImagePainter.State.Error) {
+        DocumentCard(label = label, onClick = onClick)
+        return
+    }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(160.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            painter = painter,
+            contentDescription = stringResource(R.string.attachment_image_description),
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        if (state is AsyncImagePainter.State.Loading) {
+            CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+        }
+    }
+}
+
+@Composable
+private fun DocumentCard(label: String, onClick: () -> Unit) {
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        shape = RoundedCornerShape(8.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+    ) {
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("📄", fontSize = 18.sp)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.primary,
+                textDecoration = TextDecoration.Underline,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

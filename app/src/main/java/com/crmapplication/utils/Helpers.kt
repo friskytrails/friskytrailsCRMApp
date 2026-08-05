@@ -40,10 +40,59 @@ fun getDueDateStatus(dueMs: Long): String {
     }
 }
 
-fun formatWhatsAppUrl(phone: String): String {
-    val clean = phone.replace(Regex("[^0-9]"), "")
-    return "https://wa.me/$clean"
+/**
+ * Calling code assumed when a lead's number carries none. Leads are entered in national
+ * (10-digit) form far more often than international form, and WhatsApp cannot resolve a number
+ * without a country code.
+ */
+private const val DEFAULT_COUNTRY_CODE = "91"
+
+/** Length of a national (country-code-less) number for [DEFAULT_COUNTRY_CODE]. */
+private const val NATIONAL_NUMBER_DIGITS = 10
+
+/** Longest number E.164 allows; anything above this is malformed data, not a real number. */
+private const val MAX_E164_DIGITS = 15
+
+/**
+ * Normalises a lead's phone number to the digits-only international form WhatsApp expects:
+ * country code + national number, no `+`, no `00` prefix, no trunk `0`.
+ *
+ * Stripping non-digits alone is not enough — that leaves `9876543210` (no country code),
+ * `09876543210` (trunk prefix) and `919198765432` shapes that all resolve to "number is not on
+ * WhatsApp". A number that already declares its country code (leading `+` or `00`) is trusted as
+ * given, so international leads keep working; only the ambiguous shapes get [DEFAULT_COUNTRY_CODE].
+ */
+fun toWhatsAppNumber(phone: String): String {
+    val trimmed = phone.trim()
+    val digits = trimmed.filter(Char::isDigit)
+    if (digits.isEmpty()) return ""
+
+    // A leading '+' or '00' means the number states its own country code, so the default must
+    // not be prepended. The rest of the cleanup still applies — a declared code can be malformed.
+    val statesCountryCode = trimmed.startsWith("+") || digits.startsWith("00")
+
+    // Drop dial-out '00' and any trunk/stray leading zeros ("0 98765 43210", "091 98765 43210").
+    val bare = (if (digits.startsWith("00")) digits.drop(2) else digits).trimStart('0')
+    if (bare.isEmpty()) return ""
+
+    val cc = DEFAULT_COUNTRY_CODE
+    val ccLength = cc.length
+    return when {
+        // Country code typed twice ("+91 91 98765 43210", "9191 98765 43210").
+        bare.length == 2 * ccLength + NATIONAL_NUMBER_DIGITS &&
+            bare.startsWith(cc.repeat(2)) -> bare.drop(ccLength)
+        // Already well-formed "91XXXXXXXXXX".
+        bare.length == ccLength + NATIONAL_NUMBER_DIGITS && bare.startsWith(cc) -> bare
+        // Bare national number — the common case, and the one that used to fail.
+        !statesCountryCode && bare.length == NATIONAL_NUMBER_DIGITS -> cc + bare
+        // Another country's code + subscriber number — leave it alone.
+        bare.length <= MAX_E164_DIGITS -> bare
+        // Beyond E.164: keep the trailing subscriber digits, which is the identifying part.
+        else -> cc + bare.takeLast(NATIONAL_NUMBER_DIGITS)
+    }
 }
+
+fun formatWhatsAppUrl(phone: String): String = "https://wa.me/${toWhatsAppNumber(phone)}"
 
 fun formatDuration(seconds: Long): String {
     if (seconds <= 0) return "0s"
@@ -85,6 +134,32 @@ fun formatBookingDateTime(raw: String?): String? {
     }
 
     return value
+}
+
+/**
+ * Displays a lead's `travelDate`. The backend stores it as a free-form string — usually
+ * `yyyy-MM-dd`, but the web dashboard can write an already-formatted date — so a value that doesn't
+ * parse is shown as the agent typed it rather than replaced with an error or a wrong date.
+ */
+fun formatTravelDate(raw: String?): String? {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    val parsed = runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(value)
+    }.getOrNull()
+    return parsed?.let { SimpleDateFormat("dd MMM yyyy", Locale.getDefault()).format(it) } ?: value
+}
+
+/**
+ * Parses a lead's `travelDate` back to epoch millis for the date picker's initial selection, or null
+ * when it isn't a `yyyy-MM-dd` value (in which case the picker just opens on today).
+ */
+fun parseTravelDateMillis(raw: String?): Long? {
+    val value = raw?.trim().orEmpty()
+    if (value.isEmpty()) return null
+    return runCatching {
+        SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { isLenient = false }.parse(value)?.time
+    }.getOrNull()
 }
 
 fun formatTalkTime(totalSeconds: Long): String {

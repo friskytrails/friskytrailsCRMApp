@@ -1,3 +1,32 @@
 <resources>
     <string name="app_name">FriskyTrails CRM</string>
+
+    <!-- Note attachments -->
+    <string name="attachment_image_description">Attachment preview</string>
+    <string name="attachment_preview">Preview</string>
+    <string name="attachment_preview_image_subtitle">Open in the app</string>
+    <string name="attachment_preview_document_subtitle">Open with another app</string>
+    <string name="attachment_download">Download</string>
+    <string name="attachment_download_subtitle">Save to your Downloads folder</string>
+    <string name="attachment_download_started">Downloading %1$s</string>
+    <string name="attachment_download_failed">Couldn\'t start the download</string>
+    <string name="attachment_no_app">No app on this device can open this file</string>
+    <string name="attachment_storage_permission_needed">Storage permission is needed to save downloads</string>
+    <string name="attachment_close">Close</string>
+    <string name="attachment_preview_failed">Couldn\'t load this image</string>
+    <string name="attachment_open_externally">Open in another app</string>
+
+    <!-- Editable lead fields (PUT api/leads/{id}) -->
+    <string name="lead_field_name">Name</string>
+    <string name="lead_field_travel_date">Travel Date</string>
+    <string name="lead_field_persons">No. of Persons</string>
+    <string name="lead_field_not_set">—</string>
+    <string name="lead_field_edit">Edit %1$s</string>
+    <string name="lead_field_save">Save</string>
+    <string name="lead_field_cancel">Cancel</string>
+    <string name="lead_field_clear">Clear</string>
+    <string name="lead_field_saved">Saved</string>
+    <string name="lead_field_name_required">Name can\'t be empty</string>
+    <string name="lead_field_persons_hint">Leave empty to clear</string>
+    <string name="lead_field_persons_invalid">Enter a number from 1 to 999</string>
 </resources>
