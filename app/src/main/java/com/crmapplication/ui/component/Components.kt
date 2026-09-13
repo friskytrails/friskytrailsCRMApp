@@ -1,5 +1,6 @@
 package com.crmapplication.ui.component
 
+import android.content.ClipData
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -23,6 +24,10 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.Image
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ContentCopy
+import android.content.ClipboardManager
+import androidx.compose.ui.platform.LocalContext
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.salescrm.R
@@ -241,6 +246,8 @@ fun NoteItem(
     onAttachmentClick: (String) -> Unit = {},
 ) {
 
+    val context = LocalContext.current
+
     val isMine = note.authorId != null && note.authorId == myAgentId ||
         (note.authorId == null && note.authorName != null)
     val container = if (isMine) {
@@ -271,6 +278,25 @@ fun NoteItem(
                         note.timeLabel ?: formatTimestamp(note.timestamp),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                IconButton(
+                    onClick = {
+                        val clipboard =
+                            context.getSystemService(ClipboardManager::class.java)
+
+                        clipboard.setPrimaryClip(
+                            ClipData.newPlainText(
+                                "Note",
+                                note.text
+                            )
+                        )
+                    }
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.ContentCopy,
+                        contentDescription = "Copy note"
                     )
                 }
             }
