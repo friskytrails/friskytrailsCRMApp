@@ -272,22 +272,43 @@ fun BookingDetailsDialog(
                     // ── Billing & Transaction Verification ───────────────────────────────────
                     SectionHeader(stringResource(R.string.booking_section_billing))
 
+
                     FieldPair {
                         BookingField(
                             label = stringResource(R.string.booking_field_total_amount),
                             value = form.totalAmount,
                             onValueChange = { entered ->
-                                form = form.copy(totalAmount = entered.filter(Char::isDigit))
+                                form = form.copy(
+                                    totalAmount = entered.filter(Char::isDigit)
+                                )
                             },
                             error = errors.totalAmount,
                             keyboardType = KeyboardType.Number,
                             modifier = Modifier.weight(1f),
                         )
+
+                        BookingField(
+                            label = stringResource(R.string.booking_field_gst_amount),
+                            value = form.gstAmount,
+                            onValueChange = { entered ->
+                                form = form.copy(
+                                    gstAmount = entered.filter(Char::isDigit)
+                                )
+                            },
+                            error = errors.gstAmount,
+                            keyboardType = KeyboardType.Number,
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+
+                    FieldPair {
                         BookingField(
                             label = stringResource(R.string.booking_field_paid_amount),
                             value = form.paidAmount,
                             onValueChange = { entered ->
-                                form = form.copy(paidAmount = entered.filter(Char::isDigit))
+                                form = form.copy(
+                                    paidAmount = entered.filter(Char::isDigit)
+                                )
                             },
                             error = errors.paidAmount,
                             keyboardType = KeyboardType.Number,
