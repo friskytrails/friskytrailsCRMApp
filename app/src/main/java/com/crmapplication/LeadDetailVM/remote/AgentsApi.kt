@@ -38,12 +38,49 @@ data class AttendanceLogDto(
 )
 
 /** Server-side monthly attendance summary for an agent (authoritative P/A counts). */
+/** Server-side monthly attendance summary. halfDay / fullDay / weekOff are new; present stays for older backends. */
 data class MonthlyAttendanceDto(
     val present: Int? = null,
     val absent: Int? = null,
+    val halfDay: Int? = null,
+    val fullDay: Int? = null,
+    val weekOff: Int? = null,
+)
+
+data class AttendanceRulesDto(
+    val halfDayMinSeconds: Int? = null,
+    val fullDayMinSeconds: Int? = null,
+    val weekOffDays: List<Int>? = null,
+)
+
+data class AttendanceTodayDto(
+    val date: String? = null,
+    val status: String? = null,
+    val talkTimeSeconds: Int? = null,
+    val rules: AttendanceRulesDto? = null,
+)
+
+data class PushAttendanceRequest(
+    val date: String,
+    val status: String,
+    val talkTimeSeconds: Int,
 )
 
 interface AgentsApi {
+
+    @GET("api/agents/{id}/attendance/today")
+    suspend fun getAttendanceToday(
+        @Path("id") id: String,
+        @Header("Authorization") authorization: String?,
+    ): AttendanceTodayDto
+
+    @PUT("api/agents/{id}/attendance/today")
+    suspend fun putAttendanceToday(
+        @Path("id") id: String,
+        @Header("Authorization") authorization: String?,
+        @Body body: PushAttendanceRequest,
+    ): AttendanceTodayDto
+
     @GET("api/agents/{id}/metrics")
     suspend fun getMetrics(
         @Path("id") id: String,
