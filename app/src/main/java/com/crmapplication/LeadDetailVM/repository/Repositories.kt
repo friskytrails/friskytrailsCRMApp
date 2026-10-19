@@ -808,6 +808,14 @@ class LeadsRepository @Inject constructor(
         list.map { it.toDomain() }
     }
 
+    /** Origin and destination for one lead, read straight from the server (display only, not stored). */
+    suspend fun fetchLeadRoute(leadId: String): Result<Pair<String, String>> = runCatching {
+        val token = session.getToken()?.takeIf { it.isNotBlank() }
+            ?: error("Not logged in.")
+        val dto = leadsApi.getLead(id = leadId, authorization = token.toBearerOrNull())
+        dto.origin.orEmpty().trim() to dto.destination.orEmpty().trim()
+    }.mapApiError()
+
     fun observeNotes(leadId: String): Flow<List<Note>> = noteDao.getNotesForLead(leadId).map { list ->
         list.map { it.toDomain() }
     }

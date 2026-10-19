@@ -50,6 +50,8 @@ data class ApiLeadDto(
     val notes: List<ApiNoteDto>? = null,
     val createdAt: String? = null,
     val updatedAt: String? = null,
+    val origin: String? = null,
+    val destination: String? = null,
 )
 
 data class ApiNoteDto(

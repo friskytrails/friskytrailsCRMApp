@@ -1105,7 +1105,9 @@ data class LeadDetailUiState(
     val statusHistory: List<StatusChange> = emptyList(),
 
     val myAgentId: String? = null,
-    val agentName: String = ""
+    val agentName: String = "",
+    val origin: String = "",
+    val destination: String = "",
 )
 
 /**
@@ -1177,6 +1179,12 @@ class LeadDetailViewModel @Inject constructor(
         viewModelScope.launch {
             callLogSyncRepo.backfillCallsForLead(lead.phone, lead.id, lead.assignedAt)
         }
+
+        viewModelScope.launch {
+            repo.fetchLeadRoute(lead.id).onSuccess { (origin, destination) ->
+                _state.update { it.copy(origin = origin, destination = destination) }
+            }
+        }
     }
 
     /**
@@ -1238,6 +1246,12 @@ class LeadDetailViewModel @Inject constructor(
             lead?.let { repo.refreshLeadNotes(it.id) }
             lead?.phone?.let { refreshCallLogMatch(it) }
             if (showLoading) _state.update { it.copy(isLoading = false) }
+
+            lead?.let { l ->
+                repo.fetchLeadRoute(l.id).onSuccess { (origin, destination) ->
+                    _state.update { it.copy(origin = origin, destination = destination) }
+                }
+            }
         }
     }
 
