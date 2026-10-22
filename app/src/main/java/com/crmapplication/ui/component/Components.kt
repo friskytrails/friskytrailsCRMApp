@@ -27,18 +27,32 @@ import androidx.compose.foundation.Image
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentCopy
 import android.content.ClipboardManager
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.style.TextAlign
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
+import com.crmapplication.LeadDetailVM.repository.ATTENDANCE_ABSENT
+import com.crmapplication.LeadDetailVM.repository.ATTENDANCE_FULL
+import com.crmapplication.LeadDetailVM.repository.ATTENDANCE_HALF
+import com.crmapplication.LeadDetailVM.repository.ATTENDANCE_WEEK_OFF
+import com.crmapplication.LeadDetailVM.repository.AttendanceSnapshot
 import com.salescrm.R
 import com.crmapplication.LeadDetailVM.repository.Lead
 import com.crmapplication.LeadDetailVM.repository.Note
 import com.crmapplication.LeadDetailVM.repository.isBooked
+import com.crmapplication.ui.theme.CrmPrimary
+import com.crmapplication.ui.theme.CrmSecondary
 import com.crmapplication.utils.attachmentDisplayLabel
 import com.crmapplication.utils.formatDate
+import com.crmapplication.utils.formatTalkTimeWords
 import com.crmapplication.utils.formatTimestamp
 import com.crmapplication.utils.getDueDateStatus
 import com.crmapplication.utils.timeAgo
+import java.text.SimpleDateFormat
+import java.util.Locale
 
 @Composable
 fun StatCard(
@@ -393,5 +407,194 @@ private fun DocumentCard(label: String, onClick: () -> Unit) {
                 modifier = Modifier.weight(1f),
             )
         }
+    }
+}
+
+
+private val AbsentColor = Color(0xFFDC2626)
+private val HalfDayColor = Color(0xFFD97706)
+private val FullDayColor = Color(0xFF16A34A)
+private val WeekOffColor = Color(0xFF6B7280)
+
+private fun statusColor(status: String): Color = when (status) {
+    ATTENDANCE_FULL -> FullDayColor
+    ATTENDANCE_HALF -> HalfDayColor
+    ATTENDANCE_WEEK_OFF -> WeekOffColor
+    else -> AbsentColor
+}
+
+private fun statusLabel(status: String): String = when (status) {
+    ATTENDANCE_FULL -> "Full Day"
+    ATTENDANCE_HALF -> "Half Day"
+    ATTENDANCE_WEEK_OFF -> "Week Off"
+    ATTENDANCE_ABSENT -> "Absent"
+    else -> "—"
+}
+
+private fun prettyDate(iso: String): String = runCatching {
+    val parsed = SimpleDateFormat("yyyy-MM-dd", Locale.US).parse(iso)
+    SimpleDateFormat("d MMM yyyy", Locale.getDefault()).format(parsed!!)
+}.getOrDefault(iso)
+
+/**
+ * Today's attendance: a bar that fills as talk time grows, with a mark at the half-day target and one
+ * at the full-day target, then the talk time and the status it currently earns.
+ */
+@Composable
+fun AttendanceCard(snapshot: AttendanceSnapshot, modifier: Modifier = Modifier) {
+    val accent = statusColor(snapshot.status)
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 3.dp),
+    ) {
+        Column {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Brush.horizontalGradient(listOf(CrmPrimary, CrmSecondary)))
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Today's Attendance", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                Text(prettyDate(snapshot.date), color = Color.White, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+            }
+
+            Column(Modifier.padding(16.dp)) {
+                AttendanceBar(snapshot, accent)
+
+                Spacer(Modifier.height(14.dp))
+
+                InfoLine(
+                    label = "Total talktime",
+                    value = formatTalkTimeWords(snapshot.talkSeconds),
+                    valueColor = MaterialTheme.colorScheme.onSurface,
+                )
+                Spacer(Modifier.height(6.dp))
+                InfoLine(
+                    label = "Current attendance",
+                    value = statusLabel(snapshot.status),
+                    valueColor = accent,
+                )
+
+                Spacer(Modifier.height(10.dp))
+                val hint = when {
+                    snapshot.isWeekOff -> "Week off. Talk time today is not counted."
+                    snapshot.nextStatus != null && snapshot.secondsToNext != null ->
+                        "${formatTalkTimeWords(snapshot.secondsToNext)} more for " +
+                                if (snapshot.nextStatus == ATTENDANCE_HALF) "Half Day" else "Full Day"
+                    snapshot.status == ATTENDANCE_FULL -> "Full day reached."
+                    else -> null
+                }
+                hint?.let {
+                    Text(it, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (snapshot.pendingSync) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "Not saved to the server yet. It will sync automatically.",
+                        fontSize = 11.sp,
+                        color = HalfDayColor,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AttendanceBar(snapshot: AttendanceSnapshot, accent: Color) {
+    val animatedProgress by animateFloatAsState(targetValue = snapshot.progress, label = "attendance_progress")
+    val halfMinutes = snapshot.halfDaySeconds / 60
+    val fullMinutes = snapshot.fullDaySeconds / 60
+
+    Column {
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .height(14.dp)
+        ) {
+            val barWidth = maxWidth
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+            Box(
+                Modifier
+                    .fillMaxHeight()
+                    .width(barWidth * animatedProgress)
+                    .clip(RoundedCornerShape(7.dp))
+                    .background(accent)
+            )
+            // The half-day mark.
+            Box(
+                Modifier
+                    .offset(x = barWidth * snapshot.halfTick - 1.dp)
+                    .width(2.dp)
+                    .fillMaxHeight()
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f))
+            )
+        }
+
+        Spacer(Modifier.height(4.dp))
+
+        BoxWithConstraints(
+            Modifier
+                .fillMaxWidth()
+                .height(44.dp)
+        ) {
+            val barWidth = maxWidth
+            Text(
+                "0",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.align(Alignment.TopStart),
+            )
+            MarkLabel(
+                minutes = halfMinutes,
+                code = "HD",
+                modifier = Modifier.offset(x = barWidth * snapshot.halfTick - 28.dp),
+            )
+            MarkLabel(
+                minutes = fullMinutes,
+                code = "FD",
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
+        }
+    }
+}
+
+@Composable
+private fun MarkLabel(minutes: Long, code: String, modifier: Modifier = Modifier) {
+    Column(modifier.width(56.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            "$minutes min",
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            code,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
+@Composable
+private fun InfoLine(label: String, value: String, valueColor: Color) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(value, fontSize = 15.sp, fontWeight = FontWeight.Bold, color = valueColor)
     }
 }

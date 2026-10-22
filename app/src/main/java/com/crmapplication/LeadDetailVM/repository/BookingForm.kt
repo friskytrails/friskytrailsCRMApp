@@ -57,6 +57,7 @@ data class BookingForm(
     val startDateMillis: Long? = null,
     val endDateMillis: Long? = null,
     val totalAmount: String = "",
+    val gstAmount: String = "",
     val paidAmount: String = "",
     val transactionId: String = "",
     val paymentMode: PaymentMode = PaymentMode.DEFAULT,
@@ -101,6 +102,7 @@ data class BookingFormErrors(
     val startDate: String? = null,
     val endDate: String? = null,
     val totalAmount: String? = null,
+    val gstAmount: String? = null,
     val paidAmount: String? = null,
     val transactionId: String? = null,
     val screenshot: String? = null,
@@ -165,6 +167,10 @@ fun BookingForm.validate(): BookingFormErrors = BookingFormErrors(
         null -> if (totalAmount.isBlank()) "Total amount is required" else "Enter a valid amount"
         else -> if (total <= 0L) "Total amount must be more than 0" else null
     },
+    gstAmount = when (val gst = gstAmount.toAmountOrNull()) {
+        null -> if (gstAmount.isBlank()) null else "Enter a valid GST amount"
+        else -> null
+    },
     paidAmount = when (val paid = paidAmount.toAmountOrNull()) {
         null -> if (paidAmount.isBlank()) "Paid amount is required" else "Enter a valid amount"
         else -> {
@@ -213,6 +219,9 @@ fun BookingForm.toFormFields(leadId: String? = null): Map<String, String> = buil
     // number the agent took the trouble to collect isn't dropped on the floor if the field is added.
     emergencyContactNumber.trim().takeIf { it.isNotEmpty() }
         ?.let { put("emergencyContactNumber", it) }
+
+    gstAmount.toAmountOrNull()
+        ?.let { put("gstAmount", it.toString()) }
 
     leadId?.trim()?.takeIf { it.isNotEmpty() }?.let { put("leadId", it) }
 }

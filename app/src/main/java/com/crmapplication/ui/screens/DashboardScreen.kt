@@ -30,6 +30,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.crmapplication.LeadDetailVM.repository.DashboardStats
 import com.crmapplication.LeadDetailVM.repository.MonthlyStats
+import com.crmapplication.ui.component.AttendanceCard
 import com.crmapplication.ui.theme.*
 import com.crmapplication.viewModel.DashboardViewModel
 import java.text.SimpleDateFormat
@@ -196,9 +197,12 @@ fun DashboardScreen(
 
                     Spacer(Modifier.height(16.dp))
 
-                    MonthlyCard(stats = data.monthly)
+                    state.attendance?.let {
+                        AttendanceCard(snapshot = it)
+                        Spacer(Modifier.height(16.dp))
+                    }
 
-                    Spacer(Modifier.height(20.dp))
+                    MonthlyCard(stats = data.monthly)
                 }
                  
 
@@ -397,12 +401,11 @@ private fun PerformanceRow(
 }
 
 private fun attendanceColor(attendance: String): Color? = when (attendance) {
-    "Present" -> Color(0xFF16A34A)
+    "Full Day" -> Color(0xFF16A34A)
+    "Half Day" -> Color(0xFFD97706)
     "Absent" -> Color(0xFFDC2626)
-
     else -> null
 }
-
 @Composable
 private fun MonthlyCard(stats: MonthlyStats) {
     Card(
